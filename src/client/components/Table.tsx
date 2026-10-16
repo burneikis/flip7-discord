@@ -784,10 +784,10 @@ function ActionContent({ game, prompt, myPrompt, name, decide, swapPick, clearSw
 }
 
 /**
- * Hit/Stay in three fixed columns: info | Hit Stay | Undo. Before your turn the
- * buttons queue a choice; when your turn comes they act at once, or a queued
- * choice fires after a short grace period. Hit and Stay never move, so a click
- * meant for one can't land on something else.
+ * Hit/Stay in three fixed columns: info | Hit Stay | spacer. Before your turn the
+ * buttons queue a choice (click it again to cancel, or the other to switch); when
+ * your turn comes they act at once, or a queued choice fires after a short grace
+ * period. Hit and Stay never move, so a click meant for one can't land on something else.
  */
 function HitStay({ game, me, prompt, myPrompt, name, decide, queued, setQueued }: BarProps) {
   const live = myPrompt?.kind === 'hitOrStay';
@@ -803,10 +803,13 @@ function HitStay({ game, me, prompt, myPrompt, name, decide, queued, setQueued }
   let info: ReactNode;
   if (live && queued) {
     info = (
-      <span className="queued-fire">
-        {queued === 'hit' ? 'Hitting' : 'Staying'} (queued)...
-        <span className="queued-bar" style={{ animationDuration: `${QUEUE_GRACE_MS}ms` }} />
-      </span>
+      <>
+        <span className="queued-fire">
+          {queued === 'hit' ? 'Hitting' : 'Staying'} (queued)...
+          <span className="queued-bar" style={{ animationDuration: `${QUEUE_GRACE_MS}ms` }} />
+        </span>
+        <span className="small muted">Click again to cancel</span>
+      </>
     );
   } else if (live && !canStay) {
     info = <span className="warn small">{noStay}</span>;
@@ -825,7 +828,7 @@ function HitStay({ game, me, prompt, myPrompt, name, decide, queued, setQueued }
     info = (
       <>
         <span className="muted">{prompt ? waitingText(prompt, name) : '...'}</span>
-        <span className="small muted">{queued ? `Queued: ${queued}, played when your turn comes` : 'Pick now to queue your move'}</span>
+        <span className="small muted">{queued ? `Queued: ${queued}, click again to cancel` : 'Pick now to queue your move'}</span>
       </>
     );
   }
@@ -835,7 +838,9 @@ function HitStay({ game, me, prompt, myPrompt, name, decide, queued, setQueued }
     if (queued ? queued === q : live && q === 'hit') cls.push('primary');
     else if (!live) cls.push('ghost');
     if (q === 'stay' && reaches && !queued) cls.push('win');
-    const title = !live ? `${q === 'hit' ? 'Hit' : 'Stay'} as soon as it is your turn` : q === 'stay' && !canStay ? noStay : '';
+    const title = queued === q
+      ? 'Click again to cancel the queued choice'
+      : !live ? `${q === 'hit' ? 'Hit' : 'Stay'} as soon as it is your turn` : q === 'stay' && !canStay ? noStay : '';
     return (
       <button className={cls.join(' ')} disabled={q === 'stay' && !canStay} onClick={() => choose(q)} title={title}>
         {q === 'hit' ? 'Hit' : 'Stay'}
@@ -850,11 +855,8 @@ function HitStay({ game, me, prompt, myPrompt, name, decide, queued, setQueued }
         {btn('hit')}
         {btn('stay')}
       </div>
-      <div className="hs-extra">
-        <button className={`btn${live ? ' big' : ''}`} style={{ visibility: queued ? 'visible' : 'hidden' }} onClick={() => setQueued(null)} title="Cancel the queued choice">
-          Undo
-        </button>
-      </div>
+      {/* Empty third column keeps Hit/Stay centered. */}
+      <div />
     </div>
   );
 }
