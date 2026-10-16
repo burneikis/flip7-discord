@@ -1,4 +1,7 @@
-- show the actual discarded cards in the discard pile, it looks empty even when it has cards in it
-- instant-win on 200, or wait till end of round and see who has highest, if someone goes over 200
-- and undo the queue as well in case of missclick
-- on flip 7 show the actual cards flipped in the animation, not just 1-7 statically
+- hit/stay queue can layout shift causing misclicks
+- it should be fine to make steal/swap/discard instant play on ourselves? not select a player to use on
+- the ui wraps ugly for brutal mode description
+
+- perm server host
+- custom rules
+- display points as chips
