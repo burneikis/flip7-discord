@@ -21,7 +21,9 @@ export function Lobby({ state, send }: { state: StateMessage; send: (m: ClientMe
         <ul className="members">
           {room.members.map((m) => (
             <li key={m.id}>
-              <span className={m.connected ? '' : 'muted'}>{m.name}</span>
+              <span className={`member-name${m.connected ? '' : ' muted'}`} title={m.name}>
+                {m.name}
+              </span>
               {!m.connected && <span className="tag offline">reconnecting</span>}
               {m.id === you && <span className="tag you">you</span>}
               {m.isBot && <span className="tag">bot</span>}
