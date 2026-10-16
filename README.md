@@ -93,6 +93,8 @@ From the rulebook plus the official FAQ (theop.games/pages/flip-7-wav-faqs):
 - Action/Modifier cards are given to any non-busted player (including stayed
   players); the receiver must use an Action if any valid target exists,
   otherwise it is discarded.
+- House rule: Steal, Swap and Discard are always used by whoever drew them
+  (no player to pick first), which saves a prompt every time.
 - Swap and Steal can bust players (both at once with a Swap).
 - Unlucky 7 discards everything else, even an existing 7, and also triggers
   when gained by Steal/Swap. Lucky 13 allows exactly one other 13.

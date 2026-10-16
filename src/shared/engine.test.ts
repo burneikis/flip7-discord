@@ -333,9 +333,7 @@ describe('action cards', () => {
     ok(g.decide('a', { type: 'hit' }));
     ok(g.decide('a', { type: 'give', targetId: 'b' }));
     expect(keys(g, 'b')).toEqual(['n2', 'n3', 'n4', 'n5']);
-    // the Steal flipped during Flip Four is now played by b
-    expect(g.prompt).toMatchObject({ kind: 'give', playerId: 'b', card: { action: 'steal' } });
-    ok(g.decide('b', { type: 'give', targetId: 'b' }));
+    // the Steal flipped during Flip Four is now played by b, with no target to pick
     expect(g.prompt).toMatchObject({ kind: 'steal', playerId: 'b' });
     ok(g.decide('b', { type: 'steal', cardId: cardId(g, 'a', 'n1') }));
     expect(keys(g, 'b')).toEqual(['n2', 'n3', 'n4', 'n5', 'n1']);
@@ -355,7 +353,6 @@ describe('action cards', () => {
     ok(g.decide('a', { type: 'hit' }));
     ok(g.decide('b', { type: 'hit' }));
     ok(g.decide('c', { type: 'hit' }));
-    ok(g.decide('c', { type: 'give', targetId: 'c' }));
     ok(g.decide('c', { type: 'swap', cardIds: [cardId(g, 'a', 'n10'), cardId(g, 'b', 'n11')] }));
     expect(g.player('a').status).toBe('busted');
     expect(g.player('b').status).toBe('busted');
@@ -365,13 +362,12 @@ describe('action cards', () => {
     const g = setup(2, ['n10', 'n4', 'n11', 'swap']);
     ok(g.decide('a', { type: 'hit' }));
     ok(g.decide('b', { type: 'hit' }));
-    ok(g.decide('b', { type: 'give', targetId: 'b' }));
     expect(g.decide('b', { type: 'swap', cardIds: [cardId(g, 'a', 'n10'), cardId(g, 'a', 'n11')] })).toMatch(/different/);
   });
 
   it('Steal must be used even if it busts you (FAQ)', () => {
-    const g = setup(3, ['n13', 'n13', 'steal']);
-    ok(g.decide('c', { type: 'give', targetId: 'a' }));
+    const g = setup(2, ['n13', 'n13', 'steal']);
+    ok(g.decide('a', { type: 'hit' }));
     expect(g.prompt).toMatchObject({ kind: 'steal', playerId: 'a' });
     ok(g.decide('a', { type: 'steal', cardId: cardId(g, 'b', 'n13') }));
     expect(g.player('a').status).toBe('busted');
@@ -382,22 +378,26 @@ describe('action cards', () => {
     const g = setup(2, ['unlucky7', 'n5', 'n3', 'steal']);
     ok(g.decide('a', { type: 'hit' }));
     ok(g.decide('b', { type: 'hit' }));
-    ok(g.decide('b', { type: 'give', targetId: 'b' }));
     ok(g.decide('b', { type: 'steal', cardId: cardId(g, 'a', 'unlucky7') }));
     expect(keys(g, 'b')).toEqual(['unlucky7']);
+  });
+
+  it('Steal, Swap and Discard are played by whoever drew them, without a target prompt', () => {
+    const g = setup(3, ['n9', 'n4', 'n2', 'discard']);
+    ok(g.decide('a', { type: 'hit' }));
+    expect(g.prompt).toMatchObject({ kind: 'discard', playerId: 'a' });
+    expect(g.log.some((e) => e.text === 'A plays Discard')).toBe(true);
   });
 
   it('Discard removes any card you choose', () => {
     const g = setup(2, ['n9', 'n4', 'discard']);
     ok(g.decide('a', { type: 'hit' }));
-    ok(g.decide('a', { type: 'give', targetId: 'a' }));
     ok(g.decide('a', { type: 'discard', cardId: cardId(g, 'b', 'n4') }));
     expect(keys(g, 'b')).toEqual([]);
   });
 
   it('is discarded when there is nothing to target at the start of a round', () => {
     const g = setup(2, ['swap', 'n4', 'n5']);
-    ok(g.decide('a', { type: 'give', targetId: 'b' }));
     expect(g.log.some((e) => e.text.includes('no valid cards'))).toBe(true);
     expect(g.prompt).toMatchObject({ kind: 'hitOrStay', playerId: 'a' });
   });

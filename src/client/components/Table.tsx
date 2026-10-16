@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties, type RefObject } from 'react';
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from 'react';
 import { cardLabel, cardWithArticle, cardKeys, cardFromKey, VARIANT_NAMES, type Card, type NumberCard, type Variant } from '../../shared/cards';
 import type { GameEvent, Prompt } from '../../shared/engine';
 import { REVEAL_MS, STATUS_MS, type ClientMessage, type GameView, type PlayerView } from '../../shared/protocol';
@@ -496,7 +496,9 @@ function Center({ game, reveal, spent, discard, name, scale }: CenterProps) {
     if (reveal.step) caption += ` (${reveal.step.n} of ${reveal.step.of})`;
   } else if (reveal?.kind === 'play') {
     card = reveal.card;
-    caption = reveal.playerId === reveal.targetId ? `${name(reveal.playerId)} keeps it` : `${name(reveal.playerId)} -> ${name(reveal.targetId)}`;
+    const selfPlayed = card.kind === 'action' && (card.action === 'steal' || card.action === 'swap' || card.action === 'discard');
+    if (reveal.playerId !== reveal.targetId) caption = `${name(reveal.playerId)} -> ${name(reveal.targetId)}`;
+    else caption = `${name(reveal.playerId)} ${selfPlayed ? 'plays it' : 'keeps it'}`;
   }
   const turn = game.turnId ? name(game.turnId) : null;
   return (
@@ -705,7 +707,9 @@ interface BarProps {
 }
 
 function ActionBar(props: BarProps) {
-  const { myPrompt, timeLeft, timerFrac } = props;
+  const { game, myPrompt, canQueue, timeLeft, timerFrac } = props;
+  // Hit/Stay (yours, or queued in advance) keeps one fixed layout, so the buttons never move under the cursor.
+  const hitStay = game.phase === 'playing' && (myPrompt ? myPrompt.kind === 'hitOrStay' : canQueue);
   const timer =
     timeLeft !== null && timerFrac !== null ? (
       <div className={`turn-timer${timeLeft < 5000 ? ' low' : ''}`}>
@@ -714,66 +718,26 @@ function ActionBar(props: BarProps) {
       </div>
     ) : null;
   return (
-    <div className={`action-bar${myPrompt ? ' mine' : ''}`}>
-      <div className="action-body">
-        <ActionContent {...props} />
-      </div>
+    <div className={`action-bar${myPrompt ? ' mine' : ''}${hitStay ? ' fixed' : ''}`}>
+      {hitStay ? (
+        <HitStay {...props} />
+      ) : (
+        <div className="action-body">
+          <ActionContent {...props} />
+        </div>
+      )}
       {timer}
     </div>
   );
 }
 
-function ActionContent({ game, me, prompt, myPrompt, name, decide, swapPick, clearSwap, queued, canQueue, setQueued }: BarProps) {
-  const noStay = game.options.variant === 'classic' ? 'You need a card in front of you to stay' : 'You hold the Zero, you must hit';
+function ActionContent({ game, prompt, myPrompt, name, decide, swapPick, clearSwap }: BarProps) {
   if (game.phase !== 'playing') return <span className="muted">Round over</span>;
-  if (!myPrompt) {
-    return (
-      <>
-        <span className="muted">{prompt ? waitingText(prompt, name) : '...'}</span>
-        {canQueue && <QueueButtons queued={queued} setQueued={setQueued} />}
-      </>
-    );
-  }
+  if (!myPrompt) return <span className="muted">{prompt ? waitingText(prompt, name) : '...'}</span>;
 
   switch (myPrompt.kind) {
-    case 'hitOrStay': {
-      const projected = me ? me.total + me.live.total : 0;
-      const reaches = !!me && myPrompt.canStay && projected >= game.options.target;
-      if (queued) {
-        return (
-          <>
-            <span className="queued-fire">
-              {queued === 'hit' ? 'Hitting' : 'Staying'} (queued)...
-              <span className="queued-bar" style={{ animationDuration: `${QUEUE_GRACE_MS}ms` }} />
-            </span>
-            <button className="btn big" onClick={() => setQueued(null)}>
-              Undo
-            </button>
-          </>
-        );
-      }
-      return (
-        <>
-          <button className="btn primary big" onClick={() => decide({ type: 'hit' })}>
-            Hit
-          </button>
-          <button className={`btn big${reaches ? ' win' : ''}`} disabled={!myPrompt.canStay} onClick={() => decide({ type: 'stay' })} title={myPrompt.canStay ? '' : noStay}>
-            Stay
-          </button>
-          {me && myPrompt.canStay && (
-            <span className="stay-info">
-              Staying banks <b>{me.live.total >= 0 ? `+${me.live.total}` : me.live.total}</b> for <b>{projected}</b>
-              {reaches && (
-                <span className="win-hint">
-                  {game.options.winRule === 'instant' ? ' - staying wins the game!' : ` - that reaches ${game.options.target}!`}
-                </span>
-              )}
-            </span>
-          )}
-          {!myPrompt.canStay && <span className="warn small">{noStay}</span>}
-        </>
-      );
-    }
+    case 'hitOrStay':
+      return null; // shown by HitStay
     case 'give':
       return (
         <>
@@ -819,24 +783,79 @@ function ActionContent({ game, me, prompt, myPrompt, name, decide, swapPick, cle
   }
 }
 
-/** Pick Hit or Stay before your turn; it is played as soon as your turn comes. */
-function QueueButtons({ queued, setQueued }: Pick<BarProps, 'queued' | 'setQueued'>) {
-  const toggle = (q: 'hit' | 'stay') => setQueued(queued === q ? null : q);
+/**
+ * Hit/Stay in three fixed columns: info | Hit Stay | Undo. Before your turn the
+ * buttons queue a choice; when your turn comes they act at once, or a queued
+ * choice fires after a short grace period. Hit and Stay never move, so a click
+ * meant for one can't land on something else.
+ */
+function HitStay({ game, me, prompt, myPrompt, name, decide, queued, setQueued }: BarProps) {
+  const live = myPrompt?.kind === 'hitOrStay';
+  const canStay = myPrompt?.kind === 'hitOrStay' ? myPrompt.canStay : true;
+  const noStay = game.options.variant === 'classic' ? 'You need a card in front of you to stay' : 'You hold the Zero, you must hit';
+  const choose = (q: 'hit' | 'stay') => {
+    if (live && !queued) decide({ type: q });
+    else setQueued(queued === q ? null : q);
+  };
+  const projected = me ? me.total + me.live.total : 0;
+  const reaches = live && !!me && canStay && projected >= game.options.target;
+
+  let info: ReactNode;
+  if (live && queued) {
+    info = (
+      <span className="queued-fire">
+        {queued === 'hit' ? 'Hitting' : 'Staying'} (queued)...
+        <span className="queued-bar" style={{ animationDuration: `${QUEUE_GRACE_MS}ms` }} />
+      </span>
+    );
+  } else if (live && !canStay) {
+    info = <span className="warn small">{noStay}</span>;
+  } else if (live && me) {
+    info = (
+      <span className="stay-info">
+        Staying banks <b>{me.live.total >= 0 ? `+${me.live.total}` : me.live.total}</b> for <b>{projected}</b>
+        {reaches && (
+          <span className="win-hint">
+            {game.options.winRule === 'instant' ? ' - staying wins the game!' : ` - that reaches ${game.options.target}!`}
+          </span>
+        )}
+      </span>
+    );
+  } else {
+    info = (
+      <>
+        <span className="muted">{prompt ? waitingText(prompt, name) : '...'}</span>
+        <span className="small muted">{queued ? `Queued: ${queued}, played when your turn comes` : 'Pick now to queue your move'}</span>
+      </>
+    );
+  }
+
+  const btn = (q: 'hit' | 'stay') => {
+    const cls = ['btn', 'big', 'hs'];
+    if (queued ? queued === q : live && q === 'hit') cls.push('primary');
+    else if (!live) cls.push('ghost');
+    if (q === 'stay' && reaches && !queued) cls.push('win');
+    const title = !live ? `${q === 'hit' ? 'Hit' : 'Stay'} as soon as it is your turn` : q === 'stay' && !canStay ? noStay : '';
+    return (
+      <button className={cls.join(' ')} disabled={q === 'stay' && !canStay} onClick={() => choose(q)} title={title}>
+        {q === 'hit' ? 'Hit' : 'Stay'}
+      </button>
+    );
+  };
+
   return (
-    <span className="queue">
-      <span className="small muted">{queued ? 'Queued:' : 'Queue:'}</span>
-      <button className={`btn tiny${queued === 'hit' ? ' primary' : ''}`} onClick={() => toggle('hit')} title="Hit as soon as it is your turn">
-        Hit
-      </button>
-      <button className={`btn tiny${queued === 'stay' ? ' primary' : ''}`} onClick={() => toggle('stay')} title="Stay as soon as it is your turn">
-        Stay
-      </button>
-      {queued && (
-        <button className="btn tiny ghost" onClick={() => setQueued(null)} title="Cancel the queued choice">
+    <div className="hit-stay">
+      <div className="hs-info">{info}</div>
+      <div className="hs-buttons">
+        {btn('hit')}
+        {btn('stay')}
+      </div>
+      <div className="hs-extra">
+        <button className={`btn${live ? ' big' : ''}`} style={{ visibility: queued ? 'visible' : 'hidden' }} onClick={() => setQueued(null)} title="Cancel the queued choice">
           Undo
         </button>
-      )}
-    </span>
+      </div>
+    </div>
   );
 }
 

@@ -102,6 +102,10 @@ input, select {
 .options { display: flex; flex-direction: column; gap: 8px; }
 .options label { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .options input[type='number'] { width: 80px; }
+/* Checkbox with a description: the text wraps as its own block, aligned past the box. */
+.options label.check { flex-wrap: nowrap; align-items: flex-start; }
+.options label.check input { margin: 2px 0 0; flex-shrink: 0; }
+.options .hint { display: block; margin-top: 2px; line-height: 1.35; }
 
 .notice { background: #33b5ff1a; border: 1px solid #33b5ff66; padding: 8px 10px; border-radius: 8px; justify-content: space-between; }
 
@@ -327,14 +331,26 @@ input, select {
 .action-bar {
   position: relative; overflow: hidden;
   display: flex; align-items: center; justify-content: center;
-  min-height: 62px; padding: 8px 12px; border-radius: 14px; background: #0006; border: 1px solid var(--line);
+  min-height: 72px; padding: 8px 12px; border-radius: 14px; background: #0006; border: 1px solid var(--line);
   font-size: 15px; width: min(900px, 100%); align-self: center;
 }
 .action-body { display: flex; align-items: center; justify-content: center; gap: 10px; flex-wrap: wrap; }
 .action-bar.mine { border-color: var(--accent); background: #ffcc3314; font-weight: 600; animation: barIn 0.3s ease-out; }
 @keyframes barIn { from { transform: translateY(8px); opacity: 0.4; } }
 .action-bar .card { --card-w: 40px; --card-h: 56px; }
-.queue { display: inline-flex; align-items: center; gap: 6px; padding-left: 10px; border-left: 1px solid var(--line); }
+/* Hit/Stay: fixed columns and size, and no slide-in, so the buttons never move. */
+.action-bar.fixed { height: 72px; }
+.action-bar.mine.fixed { animation: none; }
+.hit-stay { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 14px; width: 100%; }
+.hs-info { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; text-align: right; min-width: 0; overflow: hidden; max-height: 52px; }
+.hs-buttons { display: flex; gap: 10px; }
+.btn.hs { width: 104px; padding-left: 0; padding-right: 0; }
+.hs-extra { display: flex; align-items: center; justify-content: flex-start; }
+@media (max-width: 560px) {
+  .hit-stay { gap: 8px; }
+  .btn.hs { width: 78px; font-size: 16px; }
+  .hs-info { font-size: 12px; }
+}
 .queued-fire { position: relative; padding-bottom: 6px; font-weight: 700; }
 .queued-bar {
   position: absolute; left: 0; right: 0; bottom: 0; height: 3px; border-radius: 2px; background: var(--accent);
