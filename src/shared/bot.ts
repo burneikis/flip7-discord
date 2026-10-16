@@ -24,9 +24,6 @@ export function botDecision(game: Game, playerId: string): Decision {
     case 'give': {
       const others = pr.options.filter((id) => id !== playerId).map((id) => game.player(id));
       const card = pr.card;
-      if (card.kind === 'action' && ['steal', 'swap', 'discard'].includes(card.action) && pr.options.includes(playerId)) {
-        return { type: 'give', targetId: playerId };
-      }
       if (!others.length) return { type: 'give', targetId: pr.options[0] };
       if (card.kind === 'action' && card.action === 'secondChance') {
         return { type: 'give', targetId: maxBy(others, (p) => -p.total).id };

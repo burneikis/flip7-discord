@@ -47,15 +47,17 @@ export function Lobby({ state, send }: { state: StateMessage; send: (m: ClientMe
             </select>
           </label>
           {room.variant === 'vengeance' && (
-          <label>
+          <label className="check">
             <input
               type="checkbox"
               checked={room.brutal}
               disabled={!isHost}
               onChange={(e) => send({ type: 'setOptions', brutal: e.target.checked })}
             />
-            Brutal mode
-            <span className="muted small"> (scores can go negative, Modifiers can hit busted players, Flip 7 can take 15 from someone)</span>
+            <span>
+              Brutal mode
+              <span className="hint muted small">Scores can go negative, Modifiers can hit busted players, and a Flip 7 can take 15 from someone.</span>
+            </span>
           </label>
           )}
           <label>

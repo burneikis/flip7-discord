@@ -87,6 +87,9 @@ type Task =
   | { t: 'endRound' };
 
 const MAX_LOG = 200;
+/** Vengeance Actions the drawer always uses themself (they pick the cards, not a player). */
+const SELF_PLAYED = new Set(['steal', 'swap', 'discard']);
+const isSelfPlayed = (c: Card) => c.kind === 'action' && SELF_PLAYED.has(c.action);
 const MAX_EVENTS = 100;
 
 /**
@@ -437,6 +440,8 @@ export class Game {
   /** Who may receive a drawn Action (or, in Vengeance, Modifier) card. */
   private giveOptions(holderId: string, card: Card): string[] {
     if (!this.classic) {
+      // Steal/Swap/Discard are always used by whoever drew them: no target to pick.
+      if (isSelfPlayed(card) && this.player(holderId).status !== 'busted') return [holderId];
       const pool = card.kind === 'modifier' && this.options.brutal ? this.players : this.nonBusted();
       return pool.map((p) => p.id);
     }
@@ -467,6 +472,8 @@ export class Game {
     const who = holderId === targetId ? 'themself' : target.name;
     if (card.kind === 'action' && card.action === 'secondChance') {
       this.say(holderId === targetId ? `${holder.name} keeps ${cardLabel(card)}` : `${holder.name} gives ${cardLabel(card)} to ${who}`);
+    } else if (isSelfPlayed(card) && holderId === targetId) {
+      this.say(`${holder.name} plays ${cardLabel(card)}`);
     } else {
       this.say(`${holder.name} plays ${cardLabel(card)} on ${who}`);
     }
