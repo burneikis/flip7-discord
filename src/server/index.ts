@@ -18,6 +18,17 @@ const PORT = Number(process.env.PORT ?? 3001);
 const DISCORD_CLIENT_ID = process.env.VITE_DISCORD_CLIENT_ID;
 const DISCORD_CLIENT_SECRET = process.env.DISCORD_CLIENT_SECRET;
 const DEV = process.env.DEV === '1';
+/**
+ * Guests are browser players without a Discord login (ids/names from the URL).
+ * Allowed in dev mode, when Discord isn't configured, or with ALLOW_GUESTS=1.
+ * Otherwise every join must carry a verified Discord token.
+ */
+const ALLOW_GUESTS = DEV || process.env.ALLOW_GUESTS === '1' || !DISCORD_CLIENT_ID || !DISCORD_CLIENT_SECRET;
+/** Ids the server hands out itself; guests may not claim them. */
+const RESERVED_ID = /^(discord|bot)-/;
+const MAX_BODY_BYTES = 4096;
+const MAX_WS_PAYLOAD = 16 * 1024;
+const TOKEN_CACHE_MS = 60 * 60_000;
 const BOT_DELAY_MS = Number(process.env.BOT_DELAY_MS ?? 900);
 /** How long a disconnected player's decisions wait before a bot plays for them. */
 const OFFLINE_GRACE_MS = Number(process.env.OFFLINE_GRACE_MS ?? 15_000);
@@ -236,18 +247,22 @@ async function exchangeCode(code: string): Promise<{ status: number; body: unkno
   return { status: 200, body: { access_token: data.access_token } };
 }
 
-const verifiedTokens = new Map<string, { id: string; name: string }>();
+const verifiedTokens = new Map<string, { id: string; name: string; at: number }>();
 
 /** Ask Discord who owns this token, so players can't pretend to be each other. */
 async function verifyDiscordUser(token: string): Promise<{ id: string; name: string } | null> {
   const cached = verifiedTokens.get(token);
-  if (cached) return cached;
+  if (cached && Date.now() - cached.at < TOKEN_CACHE_MS) return cached;
   const res = await fetch('https://discord.com/api/v10/users/@me', { headers: { Authorization: `Bearer ${token}` } });
   if (!res.ok) return null;
   const u = (await res.json()) as { id: string; username: string; global_name?: string | null };
-  const user = { id: `discord-${u.id}`, name: u.global_name || u.username };
+  const user = { id: `discord-${u.id}`, name: u.global_name || u.username, at: Date.now() };
   verifiedTokens.set(token, user);
   return user;
+}
+
+function pruneTokenCache(now: number) {
+  for (const [token, user] of verifiedTokens) if (now - user.at >= TOKEN_CACHE_MS) verifiedTokens.delete(token);
 }
 
 function send(ws: WebSocket, msg: ServerMessage) {
@@ -370,8 +385,18 @@ const server = http.createServer((req, res) => {
   }
   if (url.pathname === '/api/token' && req.method === 'POST') {
     let raw = '';
-    req.on('data', (chunk) => (raw += chunk));
+    let tooBig = false;
+    req.on('data', (chunk) => {
+      if (tooBig) return;
+      raw += chunk;
+      if (raw.length > MAX_BODY_BYTES) {
+        tooBig = true;
+        res.writeHead(413, { 'content-type': 'application/json' }).end(JSON.stringify({ error: 'Body too large' }));
+        req.destroy();
+      }
+    });
     req.on('end', async () => {
+      if (tooBig) return;
       let result: { status: number; body: unknown };
       try {
         const { code } = JSON.parse(raw) as { code?: string };
@@ -384,8 +409,14 @@ const server = http.createServer((req, res) => {
     });
     return;
   }
-  let file = path.join(DIST, path.normalize(decodeURIComponent(url.pathname)).replace(/^([/\\])+/, ''));
-  if (!file.startsWith(DIST)) return void res.writeHead(403).end();
+  let pathname: string;
+  try {
+    pathname = decodeURIComponent(url.pathname);
+  } catch {
+    return void res.writeHead(400, { 'content-type': 'text/plain' }).end('Bad request');
+  }
+  let file = path.join(DIST, path.normalize(pathname).replace(/^([/\\])+/, ''));
+  if (file !== DIST && !file.startsWith(DIST + path.sep)) return void res.writeHead(403).end();
   if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) file = path.join(DIST, 'index.html');
   if (!fs.existsSync(file)) {
     res.writeHead(404, { 'content-type': 'text/plain' }).end('Client not built. Run `npm run build`, or use `npm run dev`.');
@@ -395,7 +426,7 @@ const server = http.createServer((req, res) => {
   fs.createReadStream(file).pipe(res);
 });
 
-const wss = new WebSocketServer({ server, path: '/ws' });
+const wss = new WebSocketServer({ server, path: '/ws', maxPayload: MAX_WS_PAYLOAD });
 
 const alive = new WeakSet<WebSocket>();
 
@@ -416,6 +447,9 @@ wss.on('connection', (ws) => {
       const user = await verifyDiscordUser(msg.accessToken).catch(() => null);
       if (!user) return send(ws, { type: 'error', message: 'Could not verify your Discord account' });
       msg = { ...msg, playerId: user.id, name: user.name };
+    } else if (msg.type === 'join') {
+      if (!ALLOW_GUESTS) return send(ws, { type: 'error', message: 'Open this from Discord to play' });
+      if (RESERVED_ID.test(String(msg.playerId))) return send(ws, { type: 'error', message: 'Invalid player id' });
     }
     let err: string | null;
     try {
@@ -462,9 +496,11 @@ setInterval(() => {
     }
     if (room.sweep(now)) room.broadcast();
   }
+  pruneTokenCache(now);
 }, 2_000);
 
 server.listen(PORT, () => {
   console.log(`Flip 7 server on http://localhost:${PORT}${DEV ? ' (dev mode: deck rigging enabled)' : ''}`);
   if (!DISCORD_CLIENT_ID || !DISCORD_CLIENT_SECRET) console.log('Discord credentials not set in .env (browser play still works)');
+  else console.log(ALLOW_GUESTS ? 'Guest (non-Discord) players allowed' : 'Discord login required (set ALLOW_GUESTS=1 to allow browser guests)');
 });

@@ -1,7 +1,7 @@
 {
   "name": "flip7-discord",
   "version": "0.1.0",
-  "description": "Flip 7: With a Vengeance as a Discord Activity (private use)",
+  "description": "Unofficial Flip 7 and Flip 7: With a Vengeance as a Discord Activity",
   "scripts": {
     "dev": "concurrently -k -n server,client -c blue,green \"npm:dev:server\" \"npm:dev:client\"",
     "dev:server": "DEV=1 tsx watch src/server/index.ts",
@@ -13,7 +13,7 @@
     "discord": "vite build && tsx src/server/index.ts",
     "tunnel": "cloudflared tunnel --url http://localhost:3001"
   },
-  "license": "UNLICENSED",
+  "license": "MIT",
   "type": "module",
   "dependencies": {
     "@discord/embedded-app-sdk": "^2.5.0",

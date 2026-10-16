@@ -1,6 +1,9 @@
 # Flip 7 - Discord Activity
 
-Implementation of *Flip 7* (default, ruleset 3.1) and *Flip 7: With a Vengeance* (The Op / USAopoly), selectable in the lobby.
+Unofficial fan implementation of *Flip 7* (default, ruleset 3.1) and *Flip 7: With a Vengeance* (The Op / USAopoly), selectable in the lobby.
+
+> Not affiliated with or endorsed by The Op. *Flip 7* is a trademark of its
+> owners; buy the real game, it's great.
 
 Official rulebooks (PDF):
 - [Flip 7](https://cdn.shopify.com/s/files/1/0611/3958/3198/files/25_FLIP_7_TB_RULES_C_Rev_9_2_25_ND.pdf?v=1756935535)
@@ -39,9 +42,8 @@ Friends on your LAN/Tailscale can join via `http://<your-ip>:5173/?room=test`.
   can't stay). Target choices (give/steal/swap...) are made by the bot.
   The timer starts once the card animations have finished.
 - Only the host starts the next round.
-- While waiting for your turn you can queue Hit or Stay (click again or
-  **Undo** to cancel). When your turn comes it fires after 1.5s, with an
-  **Undo** button in case of a misclick.
+- While waiting for your turn you can queue Hit or Stay. When your turn
+  comes it fires after 1.5s; click the queued button again to cancel.
 - Winner rule (lobby): *finish the round, highest score wins* (official), or
   *first to bank the target wins instantly* (on stay, Freeze or Flip 7).
 - Sound effects are synthesised with Web Audio; toggle them with
@@ -61,6 +63,14 @@ npm run typecheck
 ```bash
 npm run build && npm start     # one port (3001) serves client + websocket
 ```
+
+### Guests vs Discord login
+Browser players (no Discord) are *guests*: their id and name come from the
+URL/localStorage, so they are not verified. Guests are allowed in dev mode or
+when Discord credentials are not set. Once `.env` has Discord credentials,
+the server requires a verified Discord login for every player, so strangers
+who find your tunnel URL can't join or pose as someone else. Set
+`ALLOW_GUESTS=1` to allow guests anyway.
 
 ## Layout
 
