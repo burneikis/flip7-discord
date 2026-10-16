@@ -28,7 +28,7 @@ services:
       - /tmp
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
-    mem_limit: 512m
+    mem_limit: 256m
     cpus: 1.0
     pids_limit: 128
     networks: [flip7]
