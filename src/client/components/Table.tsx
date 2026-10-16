@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { cardLabel, ALL_CARD_KEYS, cardFromKey } from '../../shared/cards';
+import { cardLabel, cardKeys, cardFromKey, VARIANT_NAMES, type Variant } from '../../shared/cards';
 import type { Prompt } from '../../shared/engine';
 import type { ClientMessage, GameView, PlayerView } from '../../shared/protocol';
 import type { ScoreBreakdown } from '../../shared/scoring';
@@ -76,10 +76,11 @@ export function Table({ state, game, send }: Props) {
         <span>Round {game.round}</span>
         <span>Deck {game.deckCount}</span>
         <span>Discard {game.discardCount}</span>
+        <span>{VARIANT_NAMES[game.options.variant]}</span>
         <span>First to {game.options.target}</span>
         {game.options.brutal && <span className="tag brutal">BRUTAL</span>}
         <span className="spacer" />
-        {state.devMode && <DevPanel send={send} />}
+        {state.devMode && <DevPanel send={send} variant={game.options.variant} />}
         {isHost && (
           <button className="btn tiny ghost" onClick={() => confirm('End the game for everyone?') && send({ type: 'endGame' })}>
             End game
@@ -126,7 +127,8 @@ interface SeatProps {
 
 function Seat({ p, big, isYou, isDealer, isTurn, deciding, target, pickable, picked, onCard, onSeat }: SeatProps) {
   const busted = p.status === 'busted';
-  const mods = p.line.filter((c) => c.kind === 'modifier');
+  // Modifiers and kept Second Chance cards sit above the Number cards.
+  const mods = p.line.filter((c) => c.kind !== 'number');
   const nums = p.line.filter((c) => c.kind === 'number');
   const cls = ['seat', p.status];
   if (big) cls.push('big');
@@ -179,6 +181,7 @@ interface BarProps {
 }
 
 function ActionBar({ game, prompt, myPrompt, name, decide, swapPick, clearSwap }: BarProps) {
+  const noStay = game.options.variant === 'classic' ? 'You need a card in front of you to stay' : 'You hold the Zero, you must hit';
   if (game.phase !== 'playing') return <div className="action-bar muted">Round over</div>;
   if (!prompt) return <div className="action-bar muted">...</div>;
 
@@ -194,10 +197,10 @@ function ActionBar({ game, prompt, myPrompt, name, decide, swapPick, clearSwap }
           <button className="btn primary big" onClick={() => decide({ type: 'hit' })}>
             Hit
           </button>
-          <button className="btn big" disabled={!myPrompt.canStay} onClick={() => decide({ type: 'stay' })} title={myPrompt.canStay ? '' : 'You hold the Zero: you must keep hitting'}>
+          <button className="btn big" disabled={!myPrompt.canStay} onClick={() => decide({ type: 'stay' })} title={myPrompt.canStay ? '' : noStay}>
             Stay
           </button>
-          {!myPrompt.canStay && <span className="warn small">You hold the Zero, you must hit</span>}
+          {!myPrompt.canStay && <span className="warn small">{noStay}</span>}
         </div>
       );
     case 'give':
@@ -276,7 +279,9 @@ function breakdown(s: ScoreBreakdown): string {
   if (s.busted) return s.minus ? `Busted, -${s.minus}` : 'Busted';
   const parts = [s.zeroed ? `${s.numberSum} (zeroed)` : String(s.numberSum)];
   if (s.halved) parts.push('÷2');
+  if (s.doubled) parts.push('×2');
   if (s.minus) parts.push(`-${s.minus}`);
+  if (s.plus) parts.push(`+${s.plus}`);
   if (s.flip7Bonus) parts.push(`+${s.flip7Bonus} Flip 7`);
   else if (s.flip7) parts.push('Flip 7');
   if (s.penalty) parts.push(`${s.penalty} penalty`);
@@ -335,13 +340,13 @@ function Summary({ game, you, isHost, send, hide }: { game: GameView; you: strin
 
 // ---------------------------------------------------------------- dev
 
-function DevPanel({ send }: { send: Send }) {
+function DevPanel({ send, variant }: { send: Send; variant: Variant }) {
   const [key, setKey] = useState('n7');
   return (
     <span className="dev">
       DEV next card:
       <select value={key} onChange={(e) => setKey(e.target.value)}>
-        {ALL_CARD_KEYS.map((k) => (
+        {cardKeys(variant).map((k) => (
           <option key={k} value={k}>
             {cardLabel(cardFromKey(k, 0))}
           </option>

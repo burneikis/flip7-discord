@@ -4,7 +4,7 @@ import path from 'node:path';
 import { WebSocketServer, WebSocket } from 'ws';
 import { Game } from '../shared/engine';
 import { botDecision } from '../shared/bot';
-import { cardKey, ALL_CARD_KEYS } from '../shared/cards';
+import { cardKey, cardKeys, VARIANTS, type Variant } from '../shared/cards';
 import type { ClientMessage, GameView, RoomView, ServerMessage } from '../shared/protocol';
 
 try {
@@ -29,6 +29,7 @@ interface Member { id: string; name: string; isBot: boolean }
 class Room {
   members: Member[] = [];
   hostId: string | null = null;
+  variant: Variant = 'classic';
   brutal = false;
   target = 200;
   game: Game | null = null;
@@ -53,6 +54,7 @@ class Room {
     return {
       id: this.id,
       hostId: this.hostId,
+      variant: this.variant,
       brutal: this.brutal,
       target: this.target,
       members: this.members.map((m) => ({ ...m, connected: m.isBot || this.isConnected(m.id) })),
@@ -205,6 +207,7 @@ function handle(ws: WebSocket, msg: ClientMessage, ctx: { room: Room | null }): 
     }
     case 'setOptions': {
       if (!isHost || !inLobby) return 'Only the host can change options';
+      if (msg.variant && VARIANTS.includes(msg.variant)) room.variant = msg.variant;
       if (typeof msg.brutal === 'boolean') room.brutal = msg.brutal;
       if (typeof msg.target === 'number' && msg.target >= 25 && msg.target <= 1000) room.target = Math.round(msg.target);
       return null;
@@ -213,7 +216,7 @@ function handle(ws: WebSocket, msg: ClientMessage, ctx: { room: Room | null }): 
       if (!isHost || !inLobby) return 'Only the host can start';
       const seated = room.members.slice(0, MAX_PLAYERS);
       if (seated.length < 2) return 'Need at least 2 players (add a bot?)';
-      room.game = new Game(seated, { brutal: room.brutal, target: room.target });
+      room.game = new Game(seated, { variant: room.variant, brutal: room.brutal, target: room.target });
       return null;
     }
     case 'decide': {
@@ -234,7 +237,7 @@ function handle(ws: WebSocket, msg: ClientMessage, ctx: { room: Room | null }): 
     case 'rig': {
       if (!DEV) return 'Rigging is only available in dev mode';
       if (!room.game) return 'No game running';
-      if (!ALL_CARD_KEYS.includes(msg.key)) return 'Unknown card';
+      if (!cardKeys(room.game.options.variant).includes(msg.key)) return 'Unknown card';
       return room.game.rigTopCard((c) => cardKey(c) === msg.key) ? null : 'That card is not available';
     }
     default:

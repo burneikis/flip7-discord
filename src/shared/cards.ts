@@ -1,33 +1,53 @@
-export type ActionKind = 'justOneMore' | 'swap' | 'steal' | 'discard' | 'flipFour';
+/** classic = Flip 7 (ruleset 3.1, 94 cards); vengeance = Flip 7: With a Vengeance (108 cards). */
+export type Variant = 'classic' | 'vengeance';
+export const VARIANTS: Variant[] = ['classic', 'vengeance'];
+export const VARIANT_NAMES: Record<Variant, string> = { classic: 'Flip 7', vengeance: 'Flip 7: With a Vengeance' };
+
+export type ClassicAction = 'freeze' | 'flipThree' | 'secondChance';
+export type VengeanceAction = 'justOneMore' | 'swap' | 'steal' | 'discard' | 'flipFour';
+export type ActionKind = ClassicAction | VengeanceAction;
 export type Special = 'zero' | 'unlucky7' | 'lucky13';
 
 export interface NumberCard { id: number; kind: 'number'; value: number; special?: Special }
-export interface ModifierCard { id: number; kind: 'modifier'; op: 'sub' | 'half'; amount: number }
+/** sub/half: Vengeance. add/double: classic. */
+export interface ModifierCard { id: number; kind: 'modifier'; op: 'sub' | 'half' | 'add' | 'double'; amount: number }
 export interface ActionCard { id: number; kind: 'action'; action: ActionKind }
 export type Card = NumberCard | ModifierCard | ActionCard;
 
 /**
  * Card keys are short stable names for a card type, used by tests and the
- * dev "rig the deck" panel: n1..n13, zero, unlucky7, lucky13, -2..-10, /2,
- * justOneMore, swap, steal, discard, flipFour.
+ * dev "rig the deck" panel: n0..n13, zero, unlucky7, lucky13, -2..-10, /2,
+ * +2..+10, x2, and the action names.
  */
 export type CardKey = string;
 
 /**
- * Deck composition (108 cards). Verified against the physical deck count:
- * thirteen 13s (12 normal + Lucky 13), seven 7s (6 normal + Unlucky 7),
- * N copies of every other N, plus the Zero, one of each Modifier and two of
- * each Action. Edit here if your deck differs.
+ * Deck compositions. Edit here if your deck differs.
+ *
+ * Classic (94 cards, rulebook ruleset 3.1): N copies of every N from 12 down
+ * to 1, one plain 0, +2/+4/+6/+8/+10/x2 Modifiers and three of each Action.
+ *
+ * Vengeance (108 cards): thirteen 13s (12 normal + Lucky 13), seven 7s
+ * (6 normal + Unlucky 7), N copies of every other N, plus the Zero, one of
+ * each Modifier and two of each Action.
  */
-export const DECK_COUNTS: Record<CardKey, number> = {
-  n13: 12, n12: 12, n11: 11, n10: 10, n9: 9, n8: 8, n7: 6,
-  n6: 6, n5: 5, n4: 4, n3: 3, n2: 2, n1: 1,
-  zero: 1, unlucky7: 1, lucky13: 1,
-  '-2': 1, '-4': 1, '-6': 1, '-8': 1, '-10': 1, '/2': 1,
-  justOneMore: 2, swap: 2, steal: 2, discard: 2, flipFour: 2,
+export const DECK_COUNTS: Record<Variant, Record<CardKey, number>> = {
+  classic: {
+    n12: 12, n11: 11, n10: 10, n9: 9, n8: 8, n7: 7, n6: 6,
+    n5: 5, n4: 4, n3: 3, n2: 2, n1: 1, n0: 1,
+    '+2': 1, '+4': 1, '+6': 1, '+8': 1, '+10': 1, x2: 1,
+    freeze: 3, flipThree: 3, secondChance: 3,
+  },
+  vengeance: {
+    n13: 12, n12: 12, n11: 11, n10: 10, n9: 9, n8: 8, n7: 6,
+    n6: 6, n5: 5, n4: 4, n3: 3, n2: 2, n1: 1,
+    zero: 1, unlucky7: 1, lucky13: 1,
+    '-2': 1, '-4': 1, '-6': 1, '-8': 1, '-10': 1, '/2': 1,
+    justOneMore: 2, swap: 2, steal: 2, discard: 2, flipFour: 2,
+  },
 };
 
-const ACTIONS: ActionKind[] = ['justOneMore', 'swap', 'steal', 'discard', 'flipFour'];
+const ACTIONS: ActionKind[] = ['freeze', 'flipThree', 'secondChance', 'justOneMore', 'swap', 'steal', 'discard', 'flipFour'];
 
 export function cardFromKey(key: CardKey, id: number): Card {
   if (/^n\d+$/.test(key)) return { id, kind: 'number', value: Number(key.slice(1)) };
@@ -35,6 +55,8 @@ export function cardFromKey(key: CardKey, id: number): Card {
   if (key === 'unlucky7') return { id, kind: 'number', value: 7, special: 'unlucky7' };
   if (key === 'lucky13') return { id, kind: 'number', value: 13, special: 'lucky13' };
   if (key === '/2') return { id, kind: 'modifier', op: 'half', amount: 2 };
+  if (key === 'x2') return { id, kind: 'modifier', op: 'double', amount: 2 };
+  if (/^\+\d+$/.test(key)) return { id, kind: 'modifier', op: 'add', amount: Number(key.slice(1)) };
   if (/^-\d+$/.test(key)) return { id, kind: 'modifier', op: 'sub', amount: Number(key.slice(1)) };
   if ((ACTIONS as string[]).includes(key)) return { id, kind: 'action', action: key as ActionKind };
   throw new Error(`Unknown card key: ${key}`);
@@ -43,17 +65,32 @@ export function cardFromKey(key: CardKey, id: number): Card {
 export function cardKey(card: Card): CardKey {
   switch (card.kind) {
     case 'number': return card.special ?? `n${card.value}`;
-    case 'modifier': return card.op === 'half' ? '/2' : `-${card.amount}`;
+    case 'modifier': return modifierText(card, '/2', 'x2');
     case 'action': return card.action;
   }
 }
 
-export const ALL_CARD_KEYS: CardKey[] = Object.keys(DECK_COUNTS);
+function modifierText(card: ModifierCard, half: string, double: string): string {
+  switch (card.op) {
+    case 'half': return half;
+    case 'double': return double;
+    case 'add': return `+${card.amount}`;
+    case 'sub': return `-${card.amount}`;
+  }
+}
 
-export function buildDeck(): Card[] {
+export function modifierLabel(card: ModifierCard): string {
+  return modifierText(card, '÷2', '×2');
+}
+
+export function cardKeys(variant: Variant): CardKey[] {
+  return Object.keys(DECK_COUNTS[variant]);
+}
+
+export function buildDeck(variant: Variant = 'classic'): Card[] {
   const deck: Card[] = [];
   let id = 1;
-  for (const [key, count] of Object.entries(DECK_COUNTS)) {
+  for (const [key, count] of Object.entries(DECK_COUNTS[variant])) {
     for (let i = 0; i < count; i++) deck.push(cardFromKey(key, id++));
   }
   return deck;
@@ -69,6 +106,9 @@ export function shuffle<T>(items: T[], rng: () => number = Math.random): T[] {
 }
 
 const ACTION_NAMES: Record<ActionKind, string> = {
+  freeze: 'Freeze',
+  flipThree: 'Flip Three!',
+  secondChance: 'Second Chance',
   justOneMore: 'Just One More!',
   swap: 'Swap',
   steal: 'Steal',
@@ -87,7 +127,7 @@ export function cardLabel(card: Card): string {
       if (card.special === 'unlucky7') return 'Unlucky 7';
       if (card.special === 'lucky13') return 'Lucky 13';
       return String(card.value);
-    case 'modifier': return card.op === 'half' ? '÷2' : `-${card.amount}`;
+    case 'modifier': return modifierLabel(card);
     case 'action': return ACTION_NAMES[card.action];
   }
 }

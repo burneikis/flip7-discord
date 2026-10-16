@@ -1,6 +1,6 @@
 import type { Card } from './cards';
 import type { CardRef, Decision, Game, Player } from './engine';
-import { isBustLine, numberCards, scoreLine } from './scoring';
+import { hasSecondChance, isBustLine, numberCards, scoreLine } from './scoring';
 
 /**
  * A simple heuristic player. Used for bot seats and to auto-play for
@@ -14,7 +14,8 @@ export function botDecision(game: Game, playerId: string): Decision {
   switch (pr.kind) {
     case 'hitOrStay': {
       if (!pr.canStay) return { type: 'hit' };
-      const risk = bustChance(me.line, game.deck);
+      // A Second Chance turns the next bust into a lost card.
+      const risk = bustChance(me.line, game.deck) * (hasSecondChance(me.line) ? 0.25 : 1);
       const score = game.liveScore(me).total;
       const count = numberCards(me.line).length;
       const hit = risk < 0.2 || (score < 20 && risk < 0.45) || (count === 6 && risk < 0.5);
@@ -27,10 +28,21 @@ export function botDecision(game: Game, playerId: string): Decision {
         return { type: 'give', targetId: playerId };
       }
       if (!others.length) return { type: 'give', targetId: pr.options[0] };
+      if (card.kind === 'action' && card.action === 'secondChance') {
+        return { type: 'give', targetId: maxBy(others, (p) => -p.total).id };
+      }
+      if (card.kind === 'action' && card.action === 'freeze') {
+        const mine = game.liveScore(me).total;
+        if (pr.options.includes(playerId) && mine > 0 && bustChance(me.line, game.deck) >= 0.3) {
+          return { type: 'give', targetId: playerId };
+        }
+        // Freeze whoever banks the least, preferring the leader.
+        return { type: 'give', targetId: maxBy(others, (p) => p.total / 100 - game.liveScore(p).total).id };
+      }
       if (card.kind === 'modifier') {
         return { type: 'give', targetId: maxBy(others, (p) => p.total + game.liveScore(p).total).id };
       }
-      // Just One More / Flip Four: push the most fragile, most valuable line.
+      // Just One More / Flip Three / Flip Four: push the most fragile, most valuable line.
       return {
         type: 'give',
         targetId: maxBy(others, (p) => bustChance(p.line, game.deck) * (game.liveScore(p).total + 5) + p.total / 100).id,

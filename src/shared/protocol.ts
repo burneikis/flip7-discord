@@ -1,5 +1,5 @@
-import type { Card, CardKey } from './cards';
-import type { Decision, LogEntry, Phase, Prompt, Status } from './engine';
+import type { Card, CardKey, Variant } from './cards';
+import type { Decision, GameOptions, LogEntry, Phase, Prompt, Status } from './engine';
 import type { ScoreBreakdown } from './scoring';
 
 export interface MemberView { id: string; name: string; isBot: boolean; connected: boolean }
@@ -28,12 +28,13 @@ export interface GameView {
   log: LogEntry[];
   flip7By: string | null;
   winners: string[];
-  options: { brutal: boolean; target: number };
+  options: GameOptions;
 }
 
 export interface RoomView {
   id: string;
   hostId: string | null;
+  variant: Variant;
   brutal: boolean;
   target: number;
   members: MemberView[];
@@ -47,7 +48,7 @@ export type ClientMessage =
   | { type: 'join'; roomId: string; playerId: string; name: string; accessToken?: string }
   | { type: 'addBot' }
   | { type: 'kick'; playerId: string }
-  | { type: 'setOptions'; brutal?: boolean; target?: number }
+  | { type: 'setOptions'; variant?: Variant; brutal?: boolean; target?: number }
   | { type: 'start' }
   | { type: 'decide'; decision: Decision }
   | { type: 'nextRound' }

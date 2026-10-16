@@ -1,7 +1,8 @@
-# Flip 7: With a Vengeance - Discord Activity
+# Flip 7 - Discord Activity
 
-Private, for-our-own-group implementation of *Flip 7: With a Vengeance*
-(The Op / USAopoly). Not for distribution.
+Private, for-our-own-group implementation of *Flip 7* (default, ruleset 3.1)
+and *Flip 7: With a Vengeance* (The Op / USAopoly), selectable in the lobby.
+Not for distribution.
 
 ## Quick start
 
@@ -53,6 +54,21 @@ dev.html                multi-player test harness
 
 ## Rules decisions
 
+### Flip 7 (classic, default)
+From the ruleset 3.1 rulebook (94 cards: 0-12, +2..+10, x2, 3x Freeze,
+3x Flip Three, 3x Second Chance):
+- Modifiers stay with whoever drew them; x2 doubles the Number sum, then
+  +N Modifiers are added (they score even without Number cards).
+- Action cards target any active player (not busted, not stayed); if you are
+  the only one, you must play it on yourself.
+- Second Chance is kept; if you already have one, give it to another active
+  player without one, otherwise discard it. It cancels one bust (both cards
+  are discarded) and is discarded at the end of the round.
+- Flip Three: stop on a bust/Flip 7; a Second Chance is used immediately,
+  Freeze/Flip Three are resolved afterwards (discarded if the player busted).
+- You may only stay with at least one card in front of you.
+
+### Flip 7: With a Vengeance
 From the rulebook plus the official FAQ (theop.games/pages/flip-7-wav-faqs):
 - Action/Modifier cards are given to any non-busted player (including stayed
   players); the receiver must use an Action if any valid target exists,

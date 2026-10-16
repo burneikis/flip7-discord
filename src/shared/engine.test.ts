@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildDeck, cardFromKey, cardKey, type Card } from './cards';
 import { Game, type GameOptions } from './engine';
+import type { Variant } from './cards';
 import { scoreLine } from './scoring';
 import { botDecision } from './bot';
 
@@ -10,8 +11,9 @@ const PLAYERS = ['a', 'b', 'c', 'd'].map((id) => ({ id, name: id.toUpperCase(), 
 
 /** Seat 0 is dealt first and takes the first turn. Deck is drawn top-first in the given order. */
 function setup(n: number, deck: string[], opts: Partial<GameOptions> = {}) {
-  return new Game(PLAYERS.slice(0, n), { brutal: false, target: 200, ...opts }, () => 0.5, cards(...deck));
+  return new Game(PLAYERS.slice(0, n), { variant: 'vengeance', brutal: false, target: 200, ...opts }, () => 0.5, cards(...deck));
 }
+const classic = (n: number, deck: string[], opts: Partial<GameOptions> = {}) => setup(n, deck, { variant: 'classic', ...opts });
 const keys = (g: Game, id: string) => g.player(id).line.map(cardKey);
 const cardId = (g: Game, owner: string, key: string) => g.player(owner).line.find((c) => cardKey(c) === key)!.id;
 function ok(err: string | null) {
@@ -19,8 +21,24 @@ function ok(err: string | null) {
 }
 
 describe('deck', () => {
-  it('has 108 cards with the right composition', () => {
-    const deck = buildDeck();
+  it('classic has 94 cards with the right composition', () => {
+    const deck = buildDeck('classic');
+    expect(deck).toHaveLength(94);
+    expect(deck.filter((c) => c.kind === 'number')).toHaveLength(79);
+    expect(deck.filter((c) => c.kind === 'number' && c.value === 12)).toHaveLength(12);
+    expect(deck.filter((c) => c.kind === 'number' && c.value === 0)).toHaveLength(1);
+    expect(deck.filter((c) => c.kind === 'action')).toHaveLength(9);
+    expect(deck.filter((c) => c.kind === 'modifier').map(cardKey)).toEqual(['+2', '+4', '+6', '+8', '+10', 'x2']);
+  });
+
+  it('classic is the default variant', () => {
+    const g = new Game(PLAYERS.slice(0, 2));
+    expect(g.options.variant).toBe('classic');
+    expect(g.deck.length + g.players.reduce((n, p) => n + p.line.length, 0) + g.discardPile.length).toBe(94);
+  });
+
+  it('vengeance has 108 cards with the right composition', () => {
+    const deck = buildDeck('vengeance');
     expect(deck).toHaveLength(108);
     expect(deck.filter((c) => c.kind === 'number' && c.value === 13)).toHaveLength(13);
     expect(deck.filter((c) => c.kind === 'number' && c.value === 7)).toHaveLength(7);
@@ -41,6 +59,103 @@ describe('scoring', () => {
   it('Zero scores nothing unless Flip 7', () => {
     expect(scoreLine(cards('zero', 'n12', 'n11')).total).toBe(0);
     expect(scoreLine(cards('zero', 'n1', 'n2', 'n3', 'n4', 'n5', 'n6'), { flip7: true }).total).toBe(21 + 15);
+  });
+});
+
+describe('classic scoring', () => {
+  it('adds bonus Modifiers: 11+5+12 +4 = 32', () => {
+    expect(scoreLine(cards('n11', 'n5', 'n12', '+4')).total).toBe(32);
+  });
+  it('x2 doubles the Number cards first, then adds Modifiers', () => {
+    expect(scoreLine(cards('n10', 'n5', 'x2', '+4')).total).toBe(34);
+  });
+  it('Modifiers alone still score, except x2', () => {
+    expect(scoreLine(cards('+6', 'x2')).total).toBe(6);
+    expect(scoreLine(cards('x2')).total).toBe(0);
+  });
+  it('Flip 7 adds 15 and the 0 counts as a Number card', () => {
+    expect(scoreLine(cards('n0', 'n1', 'n2', 'n3', 'n4', 'n5', 'n6', '+2'), { flip7: true }).total).toBe(21 + 2 + 15);
+  });
+});
+
+describe('classic rules', () => {
+  it('Modifiers stay with whoever drew them', () => {
+    const g = classic(2, ['+4', 'n2']);
+    expect(keys(g, 'a')).toEqual(['+4']);
+    expect(g.prompt).toMatchObject({ kind: 'hitOrStay', playerId: 'a', canStay: true });
+  });
+
+  it('you can only stay with a card in front of you', () => {
+    const g = classic(3, ['flipThree', 'n2', 'n3', 'n4', 'n5', 'n6']);
+    ok(g.decide('a', { type: 'give', targetId: 'b' }));
+    expect(keys(g, 'b')).toEqual(['n2', 'n3', 'n4', 'n5']);
+    expect(keys(g, 'c')).toEqual(['n6']);
+    expect(g.prompt).toMatchObject({ kind: 'hitOrStay', playerId: 'a', canStay: false });
+    expect(g.decide('a', { type: 'stay' })).toMatch(/card in front/);
+  });
+
+  it('Freeze banks the target, who is out of the round', () => {
+    const g = classic(2, ['n5', 'n6', 'freeze', 'n9']);
+    ok(g.decide('a', { type: 'hit' }));
+    expect(g.prompt).toMatchObject({ kind: 'give', options: ['a', 'b'] });
+    ok(g.decide('a', { type: 'give', targetId: 'b' }));
+    expect(g.player('b').status).toBe('stayed');
+    expect(g.prompt).toMatchObject({ kind: 'hitOrStay', playerId: 'a' });
+  });
+
+  it('Action cards only target active players; alone you play them on yourself', () => {
+    const g = classic(2, ['n5', 'n6', 'freeze']);
+    ok(g.decide('a', { type: 'stay' }));
+    ok(g.decide('b', { type: 'hit' }));
+    expect(g.player('b').status).toBe('stayed');
+    expect(g.phase).toBe('roundEnd');
+    expect(g.players.map((p) => p.total)).toEqual([5, 6]);
+  });
+
+  it('Flip Three: Second Chance is used at once, Freeze waits until after', () => {
+    const g = classic(2, ['n1', 'n2', 'flipThree', 'secondChance', 'n2', 'freeze', 'n9']);
+    ok(g.decide('a', { type: 'hit' }));
+    ok(g.decide('a', { type: 'give', targetId: 'b' }));
+    expect(keys(g, 'b')).toEqual(['n2']);
+    expect(g.player('b').status).toBe('active');
+    expect(g.prompt).toMatchObject({ kind: 'give', playerId: 'b', card: { action: 'freeze' } });
+    ok(g.decide('b', { type: 'give', targetId: 'a' }));
+    expect(g.player('a').status).toBe('stayed');
+    expect(g.deck.map(cardKey)).toEqual(['n9']);
+  });
+
+  it('Flip Three stops on a bust and discards set-aside actions', () => {
+    const g = classic(2, ['n1', 'n2', 'flipThree', 'freeze', 'n2', 'n9']);
+    ok(g.decide('a', { type: 'hit' }));
+    ok(g.decide('a', { type: 'give', targetId: 'b' }));
+    expect(g.player('b').status).toBe('busted');
+    expect(g.deck.map(cardKey)).toEqual(['n9']);
+  });
+
+  it('a second Second Chance goes to another active player without one', () => {
+    const g = classic(3, ['secondChance', 'n2', 'n3', 'secondChance']);
+    expect(keys(g, 'a')).toEqual(['secondChance']);
+    ok(g.decide('a', { type: 'hit' }));
+    expect(g.prompt).toMatchObject({ kind: 'give', playerId: 'a', options: ['b', 'c'] });
+    ok(g.decide('a', { type: 'give', targetId: 'c' }));
+    expect(keys(g, 'c')).toEqual(['n3', 'secondChance']);
+  });
+
+  it('a Second Chance nobody can take is discarded', () => {
+    const g = classic(2, ['secondChance', 'secondChance', 'secondChance']);
+    ok(g.decide('a', { type: 'hit' }));
+    expect(keys(g, 'a')).toEqual(['secondChance']);
+    expect(g.discardPile.map(cardKey)).toEqual(['secondChance']);
+  });
+
+  it('Second Chance cancels a bust and is discarded with the duplicate', () => {
+    const g = classic(2, ['secondChance', 'n6', 'n5', 'n5']);
+    ok(g.decide('a', { type: 'hit' })); // n5
+    ok(g.decide('b', { type: 'stay' }));
+    ok(g.decide('a', { type: 'hit' })); // n5 again
+    expect(g.player('a').status).toBe('active');
+    expect(keys(g, 'a')).toEqual(['n5']);
+    expect(g.discardPile.map(cardKey)).toEqual(['secondChance', 'n5']);
   });
 });
 
@@ -284,7 +399,8 @@ describe('bots', () => {
     for (let seed = 1; seed <= 40; seed++) {
       let s = seed;
       const rng = () => ((s = (s * 16807) % 2147483647) / 2147483647);
-      const g = new Game(PLAYERS.slice(0, 2 + (seed % 3)), { brutal: seed % 2 === 0, target: 200 }, rng);
+      const variant: Variant = seed % 4 < 2 ? 'classic' : 'vengeance';
+      const g = new Game(PLAYERS.slice(0, 2 + (seed % 3)), { variant, brutal: seed % 2 === 0, target: 200 }, rng);
       let steps = 0;
       while (g.phase !== 'gameOver') {
         if (g.phase === 'roundEnd') g.nextRound();
@@ -292,7 +408,7 @@ describe('bots', () => {
         if (++steps > 20_000) throw new Error('game did not finish');
       }
       const total = g.deck.length + g.discardPile.length;
-      expect(total).toBe(108);
+      expect(total).toBe(buildDeck(variant).length);
     }
   });
 });

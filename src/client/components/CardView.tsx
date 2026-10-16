@@ -1,5 +1,5 @@
 import type { Card } from '../../shared/cards';
-import { actionName } from '../../shared/cards';
+import { actionName, modifierLabel } from '../../shared/cards';
 
 interface Props {
   card: Card;
@@ -36,7 +36,7 @@ export function CardView({ card, faceDown, selectable, selected, onClick }: Prop
   if (card.kind === 'modifier') {
     return (
       <div className={cls.join(' ')} onClick={handle} title="Modifier">
-        <span className="big">{card.op === 'half' ? '÷2' : `-${card.amount}`}</span>
+        <span className="big">{modifierLabel(card)}</span>
       </div>
     );
   }

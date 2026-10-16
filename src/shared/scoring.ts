@@ -9,7 +9,11 @@ export interface ScoreBreakdown {
   /** Holding the Zero without a Flip 7 makes the number total 0. */
   zeroed: boolean;
   halved: boolean;
+  /** Classic x2: doubles the Number card sum. */
+  doubled: boolean;
   minus: number;
+  /** Classic +2..+10 Modifiers. */
+  plus: number;
   flip7: boolean;
   flip7Bonus: number;
   /** Brutal mode: -15 given by another player's Flip 7. */
@@ -50,23 +54,35 @@ export function hasZero(line: Card[]): boolean {
   return line.some((c) => c.kind === 'number' && c.special === 'zero');
 }
 
-/** Order per the rulebook: sum numbers, halve (round down), subtract, floor at 0, +15. */
+export function hasSecondChance(line: Card[]): boolean {
+  return line.some((c) => c.kind === 'action' && c.action === 'secondChance');
+}
+
+/**
+ * Order per the rulebooks: sum numbers, halve (round down) or double, subtract
+ * or add Modifiers, floor at 0, +15. Each deck only has one family of Modifiers.
+ */
 export function scoreLine(line: Card[], opts: ScoreOptions = {}): ScoreBreakdown {
   const { busted = false, flip7 = false, takeBonus = true, brutal = false } = opts;
-  const minus = line.reduce((s, c) => s + (c.kind === 'modifier' && c.op === 'sub' ? c.amount : 0), 0);
-  const halves = line.filter((c) => c.kind === 'modifier' && c.op === 'half').length;
+  const mods = (op: string) => line.filter((c) => c.kind === 'modifier' && c.op === op);
+  const total = (op: string) => mods(op).reduce((s, c) => s + (c.kind === 'modifier' ? c.amount : 0), 0);
+  const minus = total('sub');
+  const plus = total('add');
+  const halves = mods('half').length;
+  const doubles = mods('double').length;
   const numberSum = numberCards(line).reduce((s, c) => s + c.value, 0);
-  const base = { numberSum, minus, halved: halves > 0, flip7, penalty: 0 };
+  const base = { numberSum, minus, plus, halved: halves > 0, doubled: doubles > 0, flip7, penalty: 0 };
 
   if (busted) {
     // Brutal: modifiers can be given to busted players and scores go negative.
-    return { ...base, busted, zeroed: false, flip7: false, flip7Bonus: 0, minus: brutal ? minus : 0, total: brutal ? -minus : 0 };
+    return { ...base, busted, zeroed: false, flip7: false, flip7Bonus: 0, plus: 0, minus: brutal ? minus : 0, total: brutal ? -minus : 0 };
   }
 
   const zeroed = hasZero(line) && !flip7;
   let score = zeroed ? 0 : numberSum;
   for (let i = 0; i < halves; i++) score = Math.floor(score / 2);
-  score -= minus;
+  for (let i = 0; i < doubles; i++) score *= 2;
+  score += plus - minus;
   if (!brutal) score = Math.max(0, score);
   const flip7Bonus = flip7 && takeBonus ? FLIP7_BONUS : 0;
   return { ...base, busted, zeroed, flip7Bonus, total: score + flip7Bonus };

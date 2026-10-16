@@ -1,3 +1,4 @@
+import { VARIANTS, VARIANT_NAMES } from '../../shared/cards';
 import type { ClientMessage } from '../../shared/protocol';
 import type { StateMessage } from '../useConnection';
 import { isInDiscord } from '../identity';
@@ -10,7 +11,7 @@ export function Lobby({ state, send }: { state: StateMessage; send: (m: ClientMe
   return (
     <div className="lobby">
       <h1 className="logo">FLIP 7</h1>
-      <div className="subtitle">with a Vengeance</div>
+      {room.variant === 'vengeance' && <div className="subtitle">with a Vengeance</div>}
       <div className="panel">
         <div className="panel-title">
           {isInDiscord() ? 'Table' : <>Room <code>{room.id}</code></>} - {room.members.length} player{room.members.length === 1 ? '' : 's'}
@@ -33,6 +34,17 @@ export function Lobby({ state, send }: { state: StateMessage; send: (m: ClientMe
 
         <div className="options">
           <label>
+            Rules
+            <select value={room.variant} disabled={!isHost} onChange={(e) => send({ type: 'setOptions', variant: e.target.value as (typeof VARIANTS)[number] })}>
+              {VARIANTS.map((v) => (
+                <option key={v} value={v}>
+                  {VARIANT_NAMES[v]}
+                </option>
+              ))}
+            </select>
+          </label>
+          {room.variant === 'vengeance' && (
+          <label>
             <input
               type="checkbox"
               checked={room.brutal}
@@ -42,6 +54,7 @@ export function Lobby({ state, send }: { state: StateMessage; send: (m: ClientMe
             Brutal mode
             <span className="muted small"> (scores can go negative, Modifiers can hit busted players, Flip 7 can take 15 from someone)</span>
           </label>
+          )}
           <label>
             First to
             <input

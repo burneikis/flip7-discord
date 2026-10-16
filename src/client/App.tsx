@@ -62,7 +62,6 @@ function NameScreen({ onSubmit }: { onSubmit: (name: string) => void }) {
       }}
     >
       <h1 className="logo">FLIP 7</h1>
-      <div className="subtitle">with a Vengeance</div>
       <input autoFocus placeholder="Your name" maxLength={24} value={value} onChange={(e) => setValue(e.target.value)} />
       <button className="btn primary" disabled={!value.trim()}>
         Join
