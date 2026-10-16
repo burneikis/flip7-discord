@@ -1,5 +1,7 @@
 # Flip 7 - Discord Activity
 
+![Flip 7 cover art](art/cover.png)
+
 Unofficial fan implementation of *Flip 7* (default, ruleset 3.1) and *Flip 7: With a Vengeance* (The Op / USAopoly), selectable in the lobby.
 
 > Not affiliated with or endorsed by The Op. *Flip 7* is a trademark of its
@@ -8,6 +10,29 @@ Unofficial fan implementation of *Flip 7* (default, ruleset 3.1) and *Flip 7: Wi
 Official rulebooks (PDF):
 - [Flip 7](https://cdn.shopify.com/s/files/1/0611/3958/3198/files/25_FLIP_7_TB_RULES_C_Rev_9_2_25_ND.pdf?v=1756935535)
 - [Flip 7: With a Vengeance](https://cdn.shopify.com/s/files/1/0611/3958/3198/files/26_FLIP_7_VENGEANCE_RULES_C.pdf?v=1770853609)
+
+## Screenshots
+
+| | |
+|---|---|
+| ![Classic Flip 7: Alice flips 7 while Bot Bix busts](docs/screenshots/table-classic.png) | ![With a Vengeance: Lucky 13, a -2 Modifier and a Swap in play](docs/screenshots/table-vengeance.png) |
+| **Flip 7**: seven unique Numbers end the round | **With a Vengeance**: Lucky 13, negative Modifiers, Swap |
+| ![Lobby with bots and the Vengeance ruleset](docs/screenshots/lobby.png) | ![End of round score table](docs/screenshots/round-summary.png) |
+| **Lobby**: rules, target score, win rule, turn timer, bots | **End of round** scores |
+
+### Art
+
+Discord activity art lives in `art/`: [`cover.png`](art/cover.png) and
+[`background.png`](art/background.png) (1920x1080) and
+[`icon.png`](art/icon.png) (1024x1024). They are rendered from
+`art/art.html` (`?m=cover|bg|icon`) with `art/shoot.mjs`, which screenshots
+the active tab of a Chrome running with `--remote-debugging-port=9222`:
+
+```bash
+node art/shoot.mjs art/cover.png 1920 1080 1 "file://$PWD/art/art.html?m=cover"
+```
+
+<img src="art/icon.png" alt="Flip 7 icon" width="128">
 
 ## Quick start
 
