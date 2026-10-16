@@ -2,6 +2,10 @@
 
 Implementation of *Flip 7* (default, ruleset 3.1) and *Flip 7: With a Vengeance* (The Op / USAopoly), selectable in the lobby.
 
+Official rulebooks (PDF):
+- [Flip 7](https://cdn.shopify.com/s/files/1/0611/3958/3198/files/25_FLIP_7_TB_RULES_C_Rev_9_2_25_ND.pdf?v=1756935535)
+- [Flip 7: With a Vengeance](https://cdn.shopify.com/s/files/1/0611/3958/3198/files/26_FLIP_7_VENGEANCE_RULES_C.pdf?v=1770853609)
+
 ## Quick start
 
 ```bash
@@ -73,7 +77,7 @@ dev.html                multi-player test harness
 ## Rules decisions
 
 ### Flip 7 (classic, default)
-From the ruleset 3.1 rulebook (94 cards: 0-12, +2..+10, x2, 3x Freeze,
+From the [ruleset 3.1 rulebook](https://cdn.shopify.com/s/files/1/0611/3958/3198/files/25_FLIP_7_TB_RULES_C_Rev_9_2_25_ND.pdf?v=1756935535) (94 cards: 0-12, +2..+10, x2, 3x Freeze,
 3x Flip Three, 3x Second Chance):
 - Modifiers stay with whoever drew them; x2 doubles the Number sum, then
   +N Modifiers are added (they score even without Number cards).
@@ -87,7 +91,7 @@ From the ruleset 3.1 rulebook (94 cards: 0-12, +2..+10, x2, 3x Freeze,
 - You may only stay with at least one card in front of you.
 
 ### Flip 7: With a Vengeance
-From the rulebook plus the official FAQ (theop.games/pages/flip-7-wav-faqs):
+From the [rulebook](https://cdn.shopify.com/s/files/1/0611/3958/3198/files/26_FLIP_7_VENGEANCE_RULES_C.pdf?v=1770853609) plus the official FAQ (theop.games/pages/flip-7-wav-faqs):
 - Action/Modifier cards are given to any non-busted player (including stayed
   players); the receiver must use an Action if any valid target exists,
   otherwise it is discarded.

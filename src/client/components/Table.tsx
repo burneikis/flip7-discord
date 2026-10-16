@@ -34,6 +34,10 @@ const REVEAL_SCALE = 74 / CARD_W;
 const QUEUE_GRACE_MS = 1500;
 /** How many discarded cards the pile shows. */
 const DISCARD_STACK = 3;
+/** Unscaled size of a chip pile on the felt, and its distance from the seat. */
+const CHIPS_W = 120;
+const CHIPS_H = 60;
+const CHIPS_GAP = 6;
 
 export function Table({ state, game, send }: Props) {
   const you = state.you;
@@ -148,26 +152,29 @@ export function Table({ state, game, send }: Props) {
         <button className={`btn tiny ghost${showLog ? ' on' : ''}`} onClick={() => setShowLog((v) => !v)}>
           Log
         </button>
-        <button className={`btn tiny ghost${muted ? '' : ' on'}`} onClick={() => setMuted(!muted)} title={muted ? 'Sound is off' : 'Sound is on'}>
+        <button className={`btn tiny ghost sound-toggle${muted ? '' : ' on'}`} onClick={() => setMuted(!muted)} title={muted ? 'Sound is off' : 'Sound is on'}>
           {muted ? 'Sound off' : 'Sound on'}
         </button>
-        {isHost &&
-          (confirmEnd ? (
-            <>
-              <span className="small warn">End for everyone?</span>
-              <button className="btn tiny danger" onClick={() => send({ type: 'endGame' })}>
-                Yes, end game
-              </button>
-              <button className="btn tiny ghost" onClick={() => setConfirmEnd(false)}>
-                Cancel
-              </button>
-            </>
-          ) : (
-            // window.confirm() is blocked inside the Discord activity iframe, so confirm inline.
-            <button className="btn tiny ghost" onClick={() => setConfirmEnd(true)}>
+        {isHost && (
+          // window.confirm() is blocked inside the Discord activity iframe, so confirm in a
+          // small popover (which also keeps the top bar from reflowing).
+          <span className="confirm-wrap">
+            <button className={`btn tiny ghost${confirmEnd ? ' on' : ''}`} onClick={() => setConfirmEnd((v) => !v)}>
               End game
             </button>
-          ))}
+            {confirmEnd && (
+              <span className="confirm-pop">
+                <span className="small warn">End for everyone?</span>
+                <button className="btn tiny danger" onClick={() => send({ type: 'endGame' })}>
+                  Yes, end game
+                </button>
+                <button className="btn tiny ghost" onClick={() => setConfirmEnd(false)}>
+                  Cancel
+                </button>
+              </span>
+            )}
+          </span>
+        )}
       </div>
 
       <div className="main">
@@ -177,6 +184,9 @@ export function Table({ state, game, send }: Props) {
               <>
                 <div className="felt" style={{ width: layout.rx * 2, height: layout.ry * 2 }} />
                 <Center game={game} reveal={fx.reveal} spent={fx.spent} discard={discardShown} name={name} scale={layout.scale} />
+                {ordered.map((p, i) => (
+                  <Chips key={p.id} total={p.total} x={size.w / 2 + layout.chips[i].x} y={size.h / 2 + layout.chips[i].y} scale={layout.scale} />
+                ))}
                 {ordered.map((p, i) => (
                   <Seat
                     key={p.id}
@@ -249,12 +259,18 @@ function useSize(ref: RefObject<HTMLElement | null>) {
   return size;
 }
 
-interface Layout { scale: number; rx: number; ry: number; points: { x: number; y: number }[] }
+interface Point { x: number; y: number }
+/** A box by its centre and half extents, relative to the board centre. */
+interface Box { x: number; y: number; hw: number; hh: number }
+interface Layout { scale: number; rx: number; ry: number; points: Point[]; chips: Point[] }
+
+const box = (p: Point, w: number, h: number): Box => ({ x: p.x, y: p.y, hw: w / 2, hh: h / 2 });
+const overlaps = (a: Box, b: Box, pad = 0) => Math.abs(a.x - b.x) < a.hw + b.hw + pad && Math.abs(a.y - b.y) < a.hh + b.hh + pad;
 
 /**
  * Seats sit on an ellipse, evenly spaced by arc length, starting at the
- * bottom (you). The largest scale where no seat overlaps another seat or the
- * centre wins.
+ * bottom (you), each with its chip pile on the felt next to it. The largest
+ * scale where no seat or chip pile overlaps another one or the centre wins.
  */
 function layoutTable(w: number, h: number, n: number): Layout | null {
   if (!w || !h || !n) return null;
@@ -266,22 +282,65 @@ function layoutTable(w: number, h: number, n: number): Layout | null {
     const ry = h / 2 - sh / 2 - 6;
     if (rx <= 0 || ry <= 0) continue;
     const points = ellipsePoints(rx, ry, n);
-    fallback = { scale, rx, ry, points };
-    const cw = CENTER_W * scale;
-    const ch = CENTER_H * scale;
-    const clearOfCenter = points.every((p) => Math.abs(p.x) >= (sw + cw) / 2 || Math.abs(p.y) >= (sh + ch) / 2);
-    let clear = clearOfCenter;
-    for (let i = 0; clear && i < n; i++) {
-      for (let j = i + 1; j < n; j++) {
-        if (Math.abs(points[i].x - points[j].x) < sw + 6 && Math.abs(points[i].y - points[j].y) < sh + 6) {
-          clear = false;
-          break;
-        }
-      }
-    }
-    if (clear) return fallback;
+    const seats = points.map((p) => box(p, sw, sh));
+    const centre = box({ x: 0, y: 0 }, CENTER_W * scale, CENTER_H * scale);
+    const chips = placeChips(points, seats, centre, { w, h, rx, ry, scale });
+    fallback = { scale, rx, ry, points, chips: chips ?? points.map((p) => chipSpots(p, scale)[0]) };
+    const seatsClear = seats.every((s, i) => !overlaps(s, centre) && seats.slice(i + 1).every((o) => !overlaps(s, o, 6)));
+    if (seatsClear && chips) return fallback;
   }
   return fallback;
+}
+
+/**
+ * Where a seat's chip pile may go, best first: between the seat and the
+ * centre, then beside the seat (nearer the centre side first).
+ */
+function chipSpots(p: Point, scale: number): Point[] {
+  const sw = SEAT_W * scale;
+  const sh = SEAT_H * scale;
+  const cw = CHIPS_W * scale;
+  const ch = CHIPS_H * scale;
+  const gap = CHIPS_GAP * scale;
+  // Leave the seat towards the centre, then step out past that edge.
+  const len = Math.hypot(p.x, p.y) || 1;
+  const ux = -p.x / len;
+  const uy = -p.y / len;
+  const tx = Math.abs(ux) > 1e-6 ? sw / 2 / Math.abs(ux) : Infinity;
+  const ty = Math.abs(uy) > 1e-6 ? sh / 2 / Math.abs(uy) : Infinity;
+  const t = Math.min(tx, ty);
+  const ex = p.x + ux * t;
+  const ey = p.y + uy * t;
+  const inward =
+    ty <= tx ? { x: ex, y: ey + Math.sign(uy) * (gap + ch / 2) } : { x: ex + Math.sign(ux) * (gap + cw / 2), y: ey };
+  // Beside the seat, lined up with its edge nearest the centre.
+  const y = p.y - Math.sign(p.y) * Math.min(Math.abs(p.y), (sh - ch) / 2);
+  const side = p.x > 1 ? -1 : 1;
+  const beside = (s: number) => ({ x: p.x + s * (sw / 2 + gap + cw / 2), y });
+  return [inward, beside(side), beside(-side)];
+}
+
+interface Bounds { w: number; h: number; rx: number; ry: number; scale: number }
+
+/** Picks a clear spot on the felt for every chip pile, or null if one doesn't fit. */
+function placeChips(points: Point[], seats: Box[], centre: Box, { w, h, rx, ry, scale }: Bounds): Point[] | null {
+  const placed: Box[] = [];
+  for (const p of points) {
+    const spot = chipSpots(p, scale)
+      .map((c) => box(c, CHIPS_W * scale, CHIPS_H * scale))
+      .find(
+        (c) =>
+          Math.abs(c.x) + c.hw <= w / 2 &&
+          Math.abs(c.y) + c.hh <= h / 2 &&
+          (c.x / rx) ** 2 + (c.y / ry) ** 2 <= 1 &&
+          !overlaps(c, centre, 4) &&
+          seats.every((s) => !overlaps(c, s, 2)) &&
+          placed.every((o) => !overlaps(c, o, 4)),
+      );
+    if (!spot) return null;
+    placed.push(spot);
+  }
+  return placed.map(({ x, y }) => ({ x, y }));
 }
 
 function ellipsePoints(rx: number, ry: number, n: number) {
@@ -515,7 +574,9 @@ function Center({ game, reveal, spent, discard, name, scale }: CenterProps) {
         {card ? (
           <>
             <CardView key={reveal!.seq} card={card} className={`revealed${spent ? ' spent' : ''}`} />
-            <span className={`caption${reveal?.kind === 'flip' && reveal.step ? ' step' : ''}`}>{caption}</span>
+            <span className={`caption${reveal?.kind === 'flip' && reveal.step ? ' step' : ''}`} title={caption ?? undefined}>
+              {caption}
+            </span>
           </>
         ) : (
           <span className="muted small">{game.phase === 'playing' ? 'Waiting for the first flip' : ''}</span>
@@ -529,7 +590,9 @@ function Center({ game, reveal, spent, discard, name, scale }: CenterProps) {
         </div>
         <span className="muted small">Discard {game.discardCount}</span>
       </div>
-      <div className="center-foot">{game.phase === 'playing' ? (turn ? `${turn}'s turn` : '') : 'Round over'}</div>
+      <div className="center-foot">
+        {game.phase === 'playing' ? (turn ? <><span className="ellipsis">{turn}</span>'s turn</> : '') : 'Round over'}
+      </div>
     </div>
   );
 }
@@ -688,6 +751,51 @@ function GoalBar({ total, live, goal }: { total: number; live: number; goal: num
   );
 }
 
+// ---------------------------------------------------------------- chips
+
+const CHIP_DENOMS = [100, 25, 10, 5, 1] as const;
+/** Chips drawn per stack; bigger stacks are capped (the total is written underneath). */
+const MAX_STACK = 8;
+
+/** Fewest chips that make up `total`, one stack per denomination, largest first. */
+function chipStacks(total: number): { value: number; count: number }[] {
+  let left = Math.max(0, Math.floor(total));
+  const out: { value: number; count: number }[] = [];
+  for (const value of CHIP_DENOMS) {
+    const count = Math.floor(left / value);
+    left -= count * value;
+    if (count) out.push({ value, count });
+  }
+  return out;
+}
+
+/** A player's banked points as stacks of poker chips on the felt. */
+function Chips({ total, x, y, scale }: { total: number; x: number; y: number; scale: number }) {
+  const stacks = chipStacks(total);
+  return (
+    <div
+      className="chips"
+      style={{ left: x, top: y, width: CHIPS_W, height: CHIPS_H, transform: `translate(-50%, -50%) scale(${scale})` }}
+      title={`${total} points banked`}
+    >
+      <div className="chip-stacks">
+        {stacks.length ? (
+          stacks.map(({ value, count }) => (
+            <div key={value} className={`chip-stack v${value}`}>
+              {Array.from({ length: Math.min(count, MAX_STACK) }, (_, i) => (
+                <span key={i} className="chip-coin" style={{ bottom: 3 + i * 4, zIndex: i, animationDelay: `${i * 50}ms` }} />
+              ))}
+            </div>
+          ))
+        ) : (
+          <div className="chip-empty" />
+        )}
+      </div>
+      <span className={`chips-total${total < 0 ? ' bad' : ''}`}>{total}</span>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------- action bar
 
 interface BarProps {
@@ -733,7 +841,14 @@ function ActionBar(props: BarProps) {
 
 function ActionContent({ game, prompt, myPrompt, name, decide, swapPick, clearSwap }: BarProps) {
   if (game.phase !== 'playing') return <span className="muted">Round over</span>;
-  if (!myPrompt) return <span className="muted">{prompt ? waitingText(prompt, name) : '...'}</span>;
+  if (!myPrompt) {
+    const text = prompt ? waitingText(prompt, name) : '...';
+    return (
+      <span className="muted ellipsis" title={text}>
+        {text}
+      </span>
+    );
+  }
 
   switch (myPrompt.kind) {
     case 'hitOrStay':
@@ -744,8 +859,8 @@ function ActionContent({ game, prompt, myPrompt, name, decide, swapPick, clearSw
           <CardView card={myPrompt.card} />
           <span>Play {cardLabel(myPrompt.card)} on:</span>
           {myPrompt.options.map((id) => (
-            <button key={id} className="btn" onClick={() => decide({ type: 'give', targetId: id })}>
-              {id === myPrompt.playerId ? `${name(id)} (you)` : name(id)}
+            <button key={id} className="btn name-btn" onClick={() => decide({ type: 'give', targetId: id })} title={name(id)}>
+              {id === myPrompt.playerId ? 'You' : name(id)}
             </button>
           ))}
           <span className="muted small">or click a glowing seat</span>
@@ -774,7 +889,7 @@ function ActionContent({ game, prompt, myPrompt, name, decide, swapPick, clearSw
             +15 for me
           </button>
           {myPrompt.options.map((id) => (
-            <button key={id} className="btn danger" onClick={() => decide({ type: 'flip7Bonus', targetId: id })}>
+            <button key={id} className="btn danger name-btn" onClick={() => decide({ type: 'flip7Bonus', targetId: id })} title={name(id)}>
               -15 {name(id)}
             </button>
           ))}
@@ -827,7 +942,7 @@ function HitStay({ game, me, prompt, myPrompt, name, decide, queued, setQueued }
   } else {
     info = (
       <>
-        <span className="muted">{prompt ? waitingText(prompt, name) : '...'}</span>
+        <span className="muted ellipsis">{prompt ? waitingText(prompt, name) : '...'}</span>
         <span className="small muted">{queued ? `Queued: ${queued}, click again to cancel` : 'Pick now to queue your move'}</span>
       </>
     );
@@ -963,6 +1078,12 @@ function Summary({ game, isHost, hostId, send, hide }: SummaryProps) {
       <div className={`panel summary${over ? ' game-over' : ''}`}>
         <div className="panel-title">{over ? `${winners} win${game.winners.length > 1 ? '' : 's'}!` : `End of round ${game.round}`}</div>
         <table>
+          <colgroup>
+            <col className="c-name" />
+            <col />
+            <col className="c-num" />
+            <col className="c-num" />
+          </colgroup>
           <thead>
             <tr>
               <th>Player</th>
@@ -974,7 +1095,7 @@ function Summary({ game, isHost, hostId, send, hide }: SummaryProps) {
           <tbody>
             {ranked.map((p, i) => (
               <tr key={p.id} className={game.winners.includes(p.id) ? 'winner' : p.id === game.flip7By ? 'flip7' : ''} style={{ animationDelay: `${i * 70}ms` }}>
-                <td>
+                <td className="ellipsis" title={p.name}>
                   {p.name}
                   {p.frozen && <span className="muted small"> (frozen)</span>}
                 </td>
