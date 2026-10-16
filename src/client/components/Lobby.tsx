@@ -79,7 +79,7 @@ export function Lobby({ state, send }: { state: StateMessage; send: (m: ClientMe
                 </option>
               ))}
             </select>
-            {room.turnSeconds > 0 && <span className="muted small">(out of time: you stay, or a bot picks for you)</span>}
+            {room.turnSeconds > 0 && <span className="muted small">(out of time: you stay)</span>}
           </label>
         </div>
 

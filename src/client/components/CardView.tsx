@@ -70,7 +70,7 @@ export function CardView({ card, faceDown, selectable, selected, className, styl
 const ACTION_GLYPH: Record<ActionKind, string> = {
   freeze: '*',
   flipThree: '3',
-  secondChance: '2',
+  secondChance: '2nd',
   justOneMore: '+1',
   swap: '<>',
   steal: '!',

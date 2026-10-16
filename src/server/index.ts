@@ -5,7 +5,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { Game } from '../shared/engine';
 import { botDecision, timeoutDecision } from '../shared/bot';
 import { cardKey, cardKeys, VARIANTS, type Variant } from '../shared/cards';
-import { TURN_TIMER_CHOICES, type ClientMessage, type GameView, type RoomView, type ServerMessage } from '../shared/protocol';
+import { TURN_TIMER_CHOICES, eventDuration, type ClientMessage, type GameView, type RoomView, type ServerMessage } from '../shared/protocol';
 import type { Prompt } from '../shared/engine';
 
 try {
@@ -49,6 +49,10 @@ class Room {
   timer: NodeJS.Timeout | null = null;
   /** Turn timer: the prompt it applies to and when it runs out. */
   private deadline: { prompt: Prompt; at: number } | null = null;
+  /** When clients will have finished animating the events sent so far. */
+  private animUntil = 0;
+  private animGame: Game | null = null;
+  private animSeq = 0;
 
   constructor(readonly id: string) {}
 
@@ -129,6 +133,7 @@ class Room {
   }
 
   broadcast() {
+    this.trackAnimations();
     this.updateDeadline();
     const room = this.roomView();
     const game = this.gameView();
@@ -138,7 +143,27 @@ class Room {
     this.scheduleAutomation();
   }
 
-  /** Start the turn timer whenever a human gets a new prompt. */
+  /** Estimate how long clients need to play the events that are about to be sent. */
+  private trackAnimations() {
+    const g = this.game;
+    if (!g) return;
+    if (this.animGame !== g) {
+      this.animGame = g;
+      this.animSeq = 0;
+      this.animUntil = 0;
+    }
+    const now = Date.now();
+    let ms = 0;
+    for (const e of g.events) if (e.seq > this.animSeq) ms += eventDuration(e);
+    this.animSeq = g.events.at(-1)?.seq ?? this.animSeq;
+    this.animUntil = Math.max(now, this.animUntil) + ms;
+  }
+
+  private animLeft(now = Date.now()) {
+    return Math.max(0, this.animUntil - now);
+  }
+
+  /** Start the turn timer whenever a human gets a new prompt (after the animations). */
   private updateDeadline() {
     const g = this.game;
     const prompt = g?.phase === 'playing' ? g.prompt : null;
@@ -146,7 +171,7 @@ class Room {
       this.deadline = null;
       return;
     }
-    if (this.deadline?.prompt !== prompt) this.deadline = { prompt, at: Date.now() + this.turnSeconds * 1000 };
+    if (this.deadline?.prompt !== prompt) this.deadline = { prompt, at: Date.now() + this.animLeft() + this.turnSeconds * 1000 };
   }
 
   /**
@@ -163,7 +188,7 @@ class Room {
     const now = Date.now();
     let delay = Infinity;
     let decideFor = botDecision;
-    if (g.player(pid).isBot) delay = BOT_DELAY_MS;
+    if (g.player(pid).isBot) delay = Math.max(BOT_DELAY_MS, this.animLeft(now) + Math.min(BOT_DELAY_MS, 400));
     else if (!this.isConnected(pid)) delay = Math.max(BOT_DELAY_MS, OFFLINE_GRACE_MS - this.offlineFor(pid, now));
     if (this.deadline?.prompt === prompt && this.deadline.at - now < delay) {
       delay = Math.max(0, this.deadline.at - now);
@@ -297,7 +322,7 @@ function handle(ws: WebSocket, msg: ClientMessage, ctx: { room: Room | null }): 
     }
     case 'nextRound': {
       if (!room.game) return 'No game running';
-      if (!room.game.players.some((p) => p.id === pid)) return 'Spectators cannot advance rounds';
+      if (!isHost) return 'Only the host can start the next round';
       return room.game.nextRound();
     }
     case 'endGame': {
