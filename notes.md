@@ -1,0 +1,14 @@
+- animations
+- centered/cleaner ui
+- show last card that causes the bust
+- needs to know when u hit 200 within ur turn so you can win as you hit it
+- randomly, while we were in lobby, it said connecting to server, then it gave a different person leader
+- if someone gets kicked, they should be able to rejoin
+- timer option at lobby start
+- show freeze cards more clearly, show when ur frozen
+- flip three should count the non-number cards (modifiers etc)
+- circular table ui
+- ui doesnt fit if multiple rows have 2 rows of cards etc
+- cool animation for flip7
+
+- "user flips x" should say "user flips a x"
