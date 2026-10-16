@@ -37,8 +37,15 @@ Friends on your LAN/Tailscale can join via `http://<your-ip>:5173/?room=test`.
   can't stay). Target choices (give/steal/swap...) are made by the bot.
   The timer starts once the card animations have finished.
 - Only the host starts the next round.
-- While waiting for your turn you can queue Hit or Stay; it is sent as soon
-  as your turn comes.
+- While waiting for your turn you can queue Hit or Stay (click again or
+  **Undo** to cancel). When your turn comes it fires after 1.5s, with an
+  **Undo** button in case of a misclick.
+- Winner rule (lobby): *finish the round, highest score wins* (official), or
+  *first to bank the target wins instantly* (on stay, Freeze or Flip 7).
+- Sound effects are synthesised with Web Audio; toggle them with
+  **Sound on/off** in the top bar (remembered per browser).
+- **End game** asks for confirmation inline (`window.confirm()` is blocked
+  inside the Discord activity iframe, which is why it used to do nothing).
 
 ### Tests
 

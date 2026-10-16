@@ -1,5 +1,5 @@
 import type { Card, CardKey, Variant } from './cards';
-import type { Decision, GameEvent, GameOptions, LogEntry, Phase, Prompt, Status } from './engine';
+import type { Decision, GameEvent, GameOptions, LogEntry, Phase, Prompt, Status, WinRule } from './engine';
 import type { ScoreBreakdown } from './scoring';
 
 export interface MemberView { id: string; name: string; isBot: boolean; connected: boolean }
@@ -26,6 +26,8 @@ export interface GameView {
   players: PlayerView[];
   deckCount: number;
   discardCount: number;
+  /** The most recently discarded cards, oldest first. */
+  discardTop: Card[];
   prompt: Prompt | null;
   log: LogEntry[];
   events: GameEvent[];
@@ -42,6 +44,7 @@ export interface RoomView {
   variant: Variant;
   brutal: boolean;
   target: number;
+  winRule: WinRule;
   /** Turn timer in seconds, 0 = off. */
   turnSeconds: number;
   members: MemberView[];
@@ -59,7 +62,7 @@ export type ClientMessage =
   /** Take a seat again (e.g. after being removed from the lobby). */
   | { type: 'sit' }
   | { type: 'ping' }
-  | { type: 'setOptions'; variant?: Variant; brutal?: boolean; target?: number; turnSeconds?: number }
+  | { type: 'setOptions'; variant?: Variant; brutal?: boolean; target?: number; winRule?: WinRule; turnSeconds?: number }
   | { type: 'start' }
   | { type: 'decide'; decision: Decision }
   | { type: 'nextRound' }
@@ -85,6 +88,7 @@ export function eventDuration(e: GameEvent): number {
     case 'bust':
     case 'freeze':
     case 'saved':
+    case 'win':
       return STATUS_MS;
     default:
       return 0;

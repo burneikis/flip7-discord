@@ -1,5 +1,5 @@
 import { buildDeck, cardLabel, cardWithArticle, actionName, shuffle, type ActionCard, type Card, type NumberCard, type Variant } from './cards';
-import { hasFlip7, hasSecondChance, hasZero, isBustLine, scoreLine, FLIP7_BONUS, type ScoreBreakdown } from './scoring';
+import { hasFlip7, hasSecondChance, hasZero, isBustLine, numberCards, scoreLine, FLIP7_BONUS, type ScoreBreakdown } from './scoring';
 
 export type Status = 'active' | 'stayed' | 'busted';
 export type Phase = 'playing' | 'roundEnd' | 'gameOver';
@@ -39,13 +39,22 @@ export type Decision =
   | { type: 'discard'; cardId: number }
   | { type: 'flip7Bonus'; targetId: string | null };
 
+/**
+ * roundEnd: the round is always finished; whoever is highest at or above the
+ * target wins. instant: the first player to bank the target (by staying, being
+ * frozen or flipping 7) wins on the spot.
+ */
+export type WinRule = 'roundEnd' | 'instant';
+export const WIN_RULES: WinRule[] = ['roundEnd', 'instant'];
+
 export interface GameOptions {
   variant: Variant;
   /** Vengeance only. */
   brutal: boolean;
   target: number;
+  winRule: WinRule;
 }
-export const DEFAULT_OPTIONS: GameOptions = { variant: 'classic', brutal: false, target: 200 };
+export const DEFAULT_OPTIONS: GameOptions = { variant: 'classic', brutal: false, target: 200, winRule: 'roundEnd' };
 export interface LogEntry { seq: number; text: string }
 
 /** Structured happenings, so clients can animate what the log describes. */
@@ -59,7 +68,10 @@ export type GameEvent =
   | { seq: number; kind: 'freeze'; playerId: string }
   | { seq: number; kind: 'saved'; playerId: string }
   | { seq: number; kind: 'stay'; playerId: string }
-  | { seq: number; kind: 'flip7'; playerId: string };
+  /** `cards`: the seven Number cards that made the Flip 7. */
+  | { seq: number; kind: 'flip7'; playerId: string; cards: NumberCard[] }
+  /** Instant-win rule: this player banked the target and wins at once. */
+  | { seq: number; kind: 'win'; playerId: string };
 type EventInput = GameEvent extends infer E ? (E extends GameEvent ? Omit<E, 'seq'> : never) : never;
 
 type Task =
@@ -96,6 +108,8 @@ export class Game {
   round = 0;
   prompt: Prompt | null = null;
   flip7By: string | null = null;
+  /** Instant-win rule: the player who banked the target mid-round. */
+  instantWinner: string | null = null;
   winners: string[] = [];
   log: LogEntry[] = [];
   events: GameEvent[] = [];
@@ -162,6 +176,7 @@ export class Game {
           this.say(`${p.name} stays`);
           this.emit({ kind: 'stay', playerId });
           this.queue.unshift({ t: 'nextTurn' });
+          this.checkInstantWin(p);
         } else return 'Choose hit or stay';
         break;
       }
@@ -245,6 +260,7 @@ export class Game {
       p.lastRound = null;
     }
     this.flip7By = null;
+    this.instantWinner = null;
     this.bonusChoice = undefined;
     this.prompt = null;
     this.phase = 'playing';
@@ -297,6 +313,7 @@ export class Game {
           p.status = 'stayed';
           this.say(`${p.name} must stay`);
           this.emit({ kind: 'stay', playerId: p.id });
+          this.checkInstantWin(p);
         }
         return;
       }
@@ -385,11 +402,23 @@ export class Game {
     } else if (hasFlip7(p.line)) {
       this.flip7By = p.id;
       this.say(`${p.name} FLIPS 7! The round ends.`);
-      this.emit({ kind: 'flip7', playerId: p.id });
+      this.emit({ kind: 'flip7', playerId: p.id, cards: numberCards(p.line) });
       this.prompt = null;
       this.dropQueue();
       this.queue = [{ t: 'endRound' }];
     }
+  }
+
+  /** Instant-win rule: a player who banks the target ends the game on the spot. */
+  private checkInstantWin(p: Player) {
+    if (this.options.winRule !== 'instant' || this.instantWinner || this.flip7By) return;
+    if (p.total + this.liveScore(p).total < this.options.target) return;
+    this.instantWinner = p.id;
+    this.say(`${p.name} banks ${this.options.target}+ and wins on the spot!`);
+    this.emit({ kind: 'win', playerId: p.id });
+    this.prompt = null;
+    this.dropQueue();
+    this.queue = [{ t: 'endRound' }];
   }
 
   /** Abandon pending work, discarding any cards that were waiting to be resolved. */
@@ -465,6 +494,7 @@ export class Game {
           p.frozen = true;
           this.say(`${p.name} is frozen and banks their points`);
           this.emit({ kind: 'freeze', playerId: p.id });
+          this.checkInstantWin(p);
         }
         return;
       case 'secondChance':
@@ -618,13 +648,26 @@ export class Game {
     this.queue = [];
 
     const top = Math.max(...this.players.map((p) => p.total));
-    if (top >= this.options.target) {
+    const instant = this.instantWinnerAfterScoring();
+    if (instant) {
+      this.winners = [instant.id];
+      this.phase = 'gameOver';
+      this.say(`${instant.name} wins with ${instant.total}!`);
+    } else if (top >= this.options.target) {
       this.winners = this.players.filter((p) => p.total === top).map((p) => p.id);
       this.phase = 'gameOver';
       this.say(`${this.winners.map((id) => this.player(id).name).join(' & ')} win${this.winners.length > 1 ? '' : 's'} with ${top}!`);
     } else {
       this.phase = 'roundEnd';
     }
+  }
+
+  /** Instant-win rule: whoever banked the target mid-round, or a Flip 7 that reached it. */
+  private instantWinnerAfterScoring(): Player | null {
+    if (this.options.winRule !== 'instant') return null;
+    if (this.instantWinner) return this.player(this.instantWinner);
+    const f7 = this.flip7By ? this.player(this.flip7By) : null;
+    return f7 && f7.total >= this.options.target ? f7 : null;
   }
 
   // ---------------------------------------------------------------- utils

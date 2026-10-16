@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, type CSSProperties, type RefObject } from 'react';
-import { cardLabel, cardWithArticle, cardKeys, cardFromKey, VARIANT_NAMES, type Card, type Variant } from '../../shared/cards';
+import { cardLabel, cardWithArticle, cardKeys, cardFromKey, VARIANT_NAMES, type Card, type NumberCard, type Variant } from '../../shared/cards';
 import type { GameEvent, Prompt } from '../../shared/engine';
 import { REVEAL_MS, STATUS_MS, type ClientMessage, type GameView, type PlayerView } from '../../shared/protocol';
 import { scoreLine, type ScoreBreakdown } from '../../shared/scoring';
 import type { StateMessage } from '../useConnection';
+import { play, setMuted, useMuted } from '../sound';
 import { CardView, Snowflake } from './CardView';
 
 type Send = (m: ClientMessage) => void;
@@ -29,6 +30,10 @@ const ZONE_GAP = 14;
 /** The revealed card in the centre: offset from the board centre and size relative to a hand card. */
 const REVEAL_DY = -10;
 const REVEAL_SCALE = 74 / CARD_W;
+/** A queued Hit/Stay waits this long once your turn comes, so a misclick can be undone. */
+const QUEUE_GRACE_MS = 1500;
+/** How many discarded cards the pile shows. */
+const DISCARD_STACK = 3;
 
 export function Table({ state, game, send }: Props) {
   const you = state.you;
@@ -48,6 +53,10 @@ export function Table({ state, game, send }: Props) {
   const ended = game.phase !== 'playing';
   const summaryReady = useDelayedFlag(ended && fx.idle, game.flip7By ? 3600 : 1400, game.round);
   const canQueue = game.phase === 'playing' && me?.status === 'active' && !myPrompt;
+  const myHitOrStay = myPrompt?.kind === 'hitOrStay';
+  const canStayNow = myPrompt?.kind === 'hitOrStay' && myPrompt.canStay;
+  const muted = useMuted();
+  const [confirmEnd, setConfirmEnd] = useState(false);
 
   useEffect(() => setSwapPick(null), [prompt]);
   useEffect(() => setHideSummary(false), [game.round, game.phase]);
@@ -55,14 +64,41 @@ export function Table({ state, game, send }: Props) {
   useEffect(() => {
     if (me?.status !== 'active') setQueued(null);
   }, [me?.status]);
+  // A queued choice fires after a short grace period, so it can still be undone.
   useEffect(() => {
-    if (!queued || myPrompt?.kind !== 'hitOrStay') return;
-    setQueued(null);
-    if (queued === 'hit' || myPrompt.canStay) send({ type: 'decide', decision: { type: queued } });
-  }, [myPrompt, queued, send]);
+    if (!queued || !myHitOrStay) return;
+    if (queued === 'stay' && !canStayNow) return setQueued(null);
+    const t = window.setTimeout(() => {
+      setQueued(null);
+      send({ type: 'decide', decision: { type: queued } });
+    }, QUEUE_GRACE_MS);
+    return () => window.clearTimeout(t);
+  }, [myHitOrStay, canStayNow, queued, send]);
+  useEffect(() => {
+    if (!confirmEnd) return;
+    const t = window.setTimeout(() => setConfirmEnd(false), 4000);
+    return () => window.clearTimeout(t);
+  }, [confirmEnd]);
+
+  // Your-turn ding, once per turn, after the animations leading up to it have played.
+  const isMyTurn = game.phase === 'playing' && game.turnId === you;
+  const dinged = useRef(false);
+  useEffect(() => {
+    if (!isMyTurn) dinged.current = false;
+    else if (fx.idle && myPrompt && !dinged.current) {
+      dinged.current = true;
+      if (!queued) play('turn');
+    }
+  });
+  useEffect(() => {
+    if (ended && summaryReady) play(game.phase === 'gameOver' ? 'win' : 'roundEnd');
+  }, [ended, summaryReady, game.phase]);
 
   const name = (id: string) => game.players.find((p) => p.id === id)?.name ?? '?';
-  const decide: Decide = (decision) => send({ type: 'decide', decision });
+  const decide: Decide = (decision) => {
+    setQueued(null);
+    send({ type: 'decide', decision });
+  };
   const shown = (p: PlayerView) => displayPlayer(p, fx.hiddenCards, fx.heldPlayers, game.options.brutal);
 
   // What's clickable right now
@@ -94,6 +130,10 @@ export function Table({ state, game, send }: Props) {
   const layout = layoutTable(size.w, size.h, ordered.length);
   const timerFrac = timeLeft !== null && state.room.turnSeconds ? Math.min(1, timeLeft / (state.room.turnSeconds * 1000)) : null;
 
+  // The discard pile shows its top cards, minus any still on the table or mid-animation.
+  const onTable = new Set(game.players.flatMap((p) => p.line.map((c) => c.id)));
+  const discardShown = game.discardTop.filter((c) => !onTable.has(c.id) && !fx.hiddenCards.has(c.id)).slice(-DISCARD_STACK);
+
   return (
     <div className="table">
       <div className="topbar">
@@ -108,11 +148,26 @@ export function Table({ state, game, send }: Props) {
         <button className={`btn tiny ghost${showLog ? ' on' : ''}`} onClick={() => setShowLog((v) => !v)}>
           Log
         </button>
-        {isHost && (
-          <button className="btn tiny ghost" onClick={() => confirm('End the game for everyone?') && send({ type: 'endGame' })}>
-            End game
-          </button>
-        )}
+        <button className={`btn tiny ghost${muted ? '' : ' on'}`} onClick={() => setMuted(!muted)} title={muted ? 'Sound is off' : 'Sound is on'}>
+          {muted ? 'Sound off' : 'Sound on'}
+        </button>
+        {isHost &&
+          (confirmEnd ? (
+            <>
+              <span className="small warn">End for everyone?</span>
+              <button className="btn tiny danger" onClick={() => send({ type: 'endGame' })}>
+                Yes, end game
+              </button>
+              <button className="btn tiny ghost" onClick={() => setConfirmEnd(false)}>
+                Cancel
+              </button>
+            </>
+          ) : (
+            // window.confirm() is blocked inside the Discord activity iframe, so confirm inline.
+            <button className="btn tiny ghost" onClick={() => setConfirmEnd(true)}>
+              End game
+            </button>
+          ))}
       </div>
 
       <div className="main">
@@ -121,7 +176,7 @@ export function Table({ state, game, send }: Props) {
             {layout && (
               <>
                 <div className="felt" style={{ width: layout.rx * 2, height: layout.ry * 2 }} />
-                <Center game={game} reveal={fx.reveal} spent={fx.spent} name={name} scale={layout.scale} />
+                <Center game={game} reveal={fx.reveal} spent={fx.spent} discard={discardShown} name={name} scale={layout.scale} />
                 {ordered.map((p, i) => (
                   <Seat
                     key={p.id}
@@ -159,7 +214,7 @@ export function Table({ state, game, send }: Props) {
             clearSwap={() => setSwapPick(null)}
             timeLeft={timeLeft}
             timerFrac={timerFrac}
-            queued={canQueue ? queued : null}
+            queued={canQueue || myHitOrStay ? queued : null}
             canQueue={canQueue}
             setQueued={setQueued}
           />
@@ -167,7 +222,7 @@ export function Table({ state, game, send }: Props) {
         {showLog && <Log game={game} />}
       </div>
 
-      {fx.celebrate && <Flip7Celebration name={fx.celebrate} />}
+      {fx.celebrate && <Flip7Celebration name={fx.celebrate.name} cards={fx.celebrate.cards} />}
       {ended && summaryReady && !fx.celebrate && !hideSummary && (
         <Summary game={game} isHost={isHost} hostId={state.room.hostId} send={send} hide={() => setHideSummary(true)} />
       )}
@@ -272,7 +327,7 @@ function useEventEffects(game: GameView) {
   const [reveal, setReveal] = useState<GameEvent | null>(null);
   const [spent, setSpent] = useState(false);
   const [callouts, setCallouts] = useState<Record<string, Callout>>({});
-  const [celebrate, setCelebrate] = useState<string | null>(null);
+  const [celebrate, setCelebrate] = useState<{ name: string; cards: NumberCard[] } | null>(null);
   /** Events received but not played yet. */
   const [pending, setPending] = useState<GameEvent[]>([]);
   const [running, setRunning] = useState(false);
@@ -312,6 +367,7 @@ function useEventEffects(game: GameView) {
           break;
         case 'flip':
         case 'play':
+          play(e.card.kind === 'number' ? 'flip' : 'action');
           setReveal(e);
           setSpent(false);
           later(fast ? 150 : FLY_AT_MS, () => {
@@ -321,22 +377,31 @@ function useEventEffects(game: GameView) {
           wait = fast ? 250 : REVEAL_MS;
           break;
         case 'bust':
+          play('bust');
           callout(e.playerId, 'bust', 'BUST!');
           wait = STATUS_MS;
           break;
         case 'freeze':
+          play('freeze');
           callout(e.playerId, 'freeze', 'FROZEN');
           wait = STATUS_MS;
           break;
         case 'saved':
+          play('saved');
           callout(e.playerId, 'saved', 'SAVED!');
           wait = STATUS_MS;
           break;
         case 'stay':
+          play('stay');
           callout(e.playerId, 'stay', 'STAY');
           break;
+        case 'win':
+          callout(e.playerId, 'win', 'WINS!');
+          wait = STATUS_MS;
+          break;
         case 'flip7':
-          setCelebrate(name(e.playerId));
+          play('flip7');
+          setCelebrate({ name: name(e.playerId), cards: e.cards ?? [] });
           later(3300, () => setCelebrate(null));
           break;
       }
@@ -420,9 +485,9 @@ function useDelayedFlag(on: boolean, delay: number, key: unknown) {
 
 // ---------------------------------------------------------------- centre
 
-interface CenterProps { game: GameView; reveal: GameEvent | null; spent: boolean; name: (id: string) => string; scale: number }
+interface CenterProps { game: GameView; reveal: GameEvent | null; spent: boolean; discard: Card[]; name: (id: string) => string; scale: number }
 
-function Center({ game, reveal, spent, name, scale }: CenterProps) {
+function Center({ game, reveal, spent, discard, name, scale }: CenterProps) {
   let caption: string | null = null;
   let card: Card | null = null;
   if (reveal?.kind === 'flip') {
@@ -455,8 +520,12 @@ function Center({ game, reveal, spent, name, scale }: CenterProps) {
         )}
       </div>
       <div className="pile">
-        <span className="discard-count">{game.discardCount}</span>
-        <span className="muted small">Discard</span>
+        <div className="discard-stack">
+          {discard.map((c) => (
+            <CardView key={c.id} card={c} style={{ '--rot': `${((c.id * 37) % 17) - 8}deg` } as CSSProperties} />
+          ))}
+        </div>
+        <span className="muted small">Discard {game.discardCount}</span>
       </div>
       <div className="center-foot">{game.phase === 'playing' ? (turn ? `${turn}'s turn` : '') : 'Round over'}</div>
     </div>
@@ -670,6 +739,19 @@ function ActionContent({ game, me, prompt, myPrompt, name, decide, swapPick, cle
     case 'hitOrStay': {
       const projected = me ? me.total + me.live.total : 0;
       const reaches = !!me && myPrompt.canStay && projected >= game.options.target;
+      if (queued) {
+        return (
+          <>
+            <span className="queued-fire">
+              {queued === 'hit' ? 'Hitting' : 'Staying'} (queued)...
+              <span className="queued-bar" style={{ animationDuration: `${QUEUE_GRACE_MS}ms` }} />
+            </span>
+            <button className="btn big" onClick={() => setQueued(null)}>
+              Undo
+            </button>
+          </>
+        );
+      }
       return (
         <>
           <button className="btn primary big" onClick={() => decide({ type: 'hit' })}>
@@ -681,7 +763,11 @@ function ActionContent({ game, me, prompt, myPrompt, name, decide, swapPick, cle
           {me && myPrompt.canStay && (
             <span className="stay-info">
               Staying banks <b>{me.live.total >= 0 ? `+${me.live.total}` : me.live.total}</b> for <b>{projected}</b>
-              {reaches && <span className="win-hint"> - that reaches {game.options.target}!</span>}
+              {reaches && (
+                <span className="win-hint">
+                  {game.options.winRule === 'instant' ? ' - staying wins the game!' : ` - that reaches ${game.options.target}!`}
+                </span>
+              )}
             </span>
           )}
           {!myPrompt.canStay && <span className="warn small">{noStay}</span>}
@@ -745,6 +831,11 @@ function QueueButtons({ queued, setQueued }: Pick<BarProps, 'queued' | 'setQueue
       <button className={`btn tiny${queued === 'stay' ? ' primary' : ''}`} onClick={() => toggle('stay')} title="Stay as soon as it is your turn">
         Stay
       </button>
+      {queued && (
+        <button className="btn tiny ghost" onClick={() => setQueued(null)} title="Cancel the queued choice">
+          Undo
+        </button>
+      )}
     </span>
   );
 }
@@ -765,7 +856,7 @@ function waitingText(p: Prompt, name: (id: string) => string): string {
 
 const CONFETTI_COLORS = ['#ff5a5f', '#ffcc33', '#3ddc84', '#33b5ff', '#b05cff', '#ffffff'];
 
-function Flip7Celebration({ name }: { name: string }) {
+function Flip7Celebration({ name, cards }: { name: string; cards: NumberCard[] }) {
   const [pieces] = useState(() =>
     Array.from({ length: 70 }, (_, i) => ({
       left: Math.random() * 100,
@@ -781,10 +872,8 @@ function Flip7Celebration({ name }: { name: string }) {
     <div className="flip7-fx" aria-live="polite">
       <div className="flip7-rays" />
       <div className="flip7-cards">
-        {[1, 2, 3, 4, 5, 6, 7].map((v, i) => (
-          <div key={v} className="flip7-card" style={{ '--i': i, '--hue': String((v * 29 + 200) % 360) } as CSSProperties}>
-            {v}
-          </div>
+        {cards.map((c, i) => (
+          <CardView key={c.id} card={c} className="flip7-card" style={{ '--i': i, '--n': cards.length } as CSSProperties} />
         ))}
       </div>
       <div className="flip7-title">FLIP 7!</div>
@@ -845,7 +934,8 @@ interface SummaryProps { game: GameView; isHost: boolean; hostId: string | null;
 function Summary({ game, isHost, hostId, send, hide }: SummaryProps) {
   const over = game.phase === 'gameOver';
   const host = game.players.find((p) => p.id === hostId);
-  const ranked = [...game.players].sort((a, b) => b.total - a.total);
+  const won = (id: string) => (game.winners.includes(id) ? 1 : 0);
+  const ranked = [...game.players].sort((a, b) => won(b.id) - won(a.id) || b.total - a.total);
   const winners = game.winners.map((id) => game.players.find((p) => p.id === id)?.name).join(' & ');
   return (
     <div className="overlay">

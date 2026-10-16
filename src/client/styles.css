@@ -139,10 +139,14 @@ input, select {
 .deck-stack .card { --card-w: 46px; --card-h: 64px; position: absolute; animation: none; }
 .deck-stack .card:nth-child(2) { top: -2px; left: 2px; }
 .deck-stack .card:nth-child(3) { top: -4px; left: 4px; }
-.discard-count {
-  width: 46px; height: 64px; border-radius: 8px; border: 2px dashed #ffffff40;
-  display: flex; align-items: center; justify-content: center; font-weight: 800; color: var(--muted);
+.discard-stack { position: relative; width: 46px; height: 64px; border-radius: 8px; border: 2px dashed #ffffff40; }
+.discard-stack .card {
+  --card-w: 46px; --card-h: 64px; position: absolute; left: -2px; top: -2px;
+  transform: rotate(var(--rot)); animation: discard-in 0.35s cubic-bezier(.3, 1.3, .5, 1) both;
 }
+.discard-stack .card .corner { font-size: 9px; }
+.discard-stack .card .label { font-size: 7px; }
+@keyframes discard-in { from { transform: translateY(-24px) rotate(calc(var(--rot) * 4)) scale(1.2); opacity: 0; } }
 .reveal { display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 110px; }
 .reveal .card { --card-w: 74px; --card-h: 104px; }
 .card.revealed { animation: reveal 0.42s cubic-bezier(.3, .9, .4, 1); transition: opacity 0.35s, transform 0.35s; }
@@ -252,6 +256,7 @@ input, select {
 .callout.freeze { background: #8fd6ff; color: #0b2a44; }
 .callout.saved { background: #ff6fae; color: white; }
 .callout.stay { background: #33b5ff; color: white; font-size: 16px; }
+.callout.win { background: var(--good); color: #062; }
 @keyframes callout {
   0% { transform: translate(-50%, 0) scale(0.3); opacity: 0; }
   15% { transform: translate(-50%, -60%) scale(1.15); opacity: 1; }
@@ -330,6 +335,12 @@ input, select {
 @keyframes barIn { from { transform: translateY(8px); opacity: 0.4; } }
 .action-bar .card { --card-w: 40px; --card-h: 56px; }
 .queue { display: inline-flex; align-items: center; gap: 6px; padding-left: 10px; border-left: 1px solid var(--line); }
+.queued-fire { position: relative; padding-bottom: 6px; font-weight: 700; }
+.queued-bar {
+  position: absolute; left: 0; right: 0; bottom: 0; height: 3px; border-radius: 2px; background: var(--accent);
+  transform-origin: left; animation: queued-drain linear forwards;
+}
+@keyframes queued-drain { from { transform: scaleX(1); } to { transform: scaleX(0); } }
 .stay-info { font-size: 13px; font-weight: 500; color: var(--muted); }
 .stay-info b { color: var(--text); }
 .win-hint { color: var(--good); font-weight: 800; }
@@ -369,12 +380,10 @@ input, select {
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 .flip7-cards { position: relative; height: 120px; width: 420px; }
-.flip7-card {
-  position: absolute; left: 50%; top: 10px; width: 64px; height: 92px; margin-left: -32px;
-  border-radius: 9px; background: #fbf7ee; border: 3px solid hsl(var(--hue) 70% 55%);
-  color: hsl(var(--hue) 70% 40%); font-size: 40px; font-weight: 900;
-  display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 14px #000a;
-  --angle: calc((var(--i) - 3) * 14deg);
+.card.flip7-card {
+  --card-w: 64px; --card-h: 92px;
+  position: absolute; left: 50%; top: 10px; margin-left: -32px; box-shadow: 0 4px 14px #000a;
+  --angle: calc((var(--i) - (var(--n) - 1) / 2) * 14deg);
   transform-origin: 50% 220%;
   animation: fan 0.8s calc(var(--i) * 0.07s) cubic-bezier(.2, 1.3, .4, 1) both;
   transform: rotate(var(--angle));
