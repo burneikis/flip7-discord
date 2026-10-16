@@ -34,10 +34,6 @@ const REVEAL_SCALE = 74 / CARD_W;
 const QUEUE_GRACE_MS = 1500;
 /** How many discarded cards the pile shows. */
 const DISCARD_STACK = 3;
-/** Unscaled size of a chip pile on the felt, and its distance from the seat. */
-const CHIPS_W = 120;
-const CHIPS_H = 60;
-const CHIPS_GAP = 6;
 
 export function Table({ state, game, send }: Props) {
   const you = state.you;
@@ -185,9 +181,6 @@ export function Table({ state, game, send }: Props) {
                 <div className="felt" style={{ width: layout.rx * 2, height: layout.ry * 2 }} />
                 <Center game={game} reveal={fx.reveal} spent={fx.spent} discard={discardShown} name={name} scale={layout.scale} />
                 {ordered.map((p, i) => (
-                  <Chips key={p.id} total={p.total} x={size.w / 2 + layout.chips[i].x} y={size.h / 2 + layout.chips[i].y} scale={layout.scale} />
-                ))}
-                {ordered.map((p, i) => (
                   <Seat
                     key={p.id}
                     p={shown(p)}
@@ -262,15 +255,15 @@ function useSize(ref: RefObject<HTMLElement | null>) {
 interface Point { x: number; y: number }
 /** A box by its centre and half extents, relative to the board centre. */
 interface Box { x: number; y: number; hw: number; hh: number }
-interface Layout { scale: number; rx: number; ry: number; points: Point[]; chips: Point[] }
+interface Layout { scale: number; rx: number; ry: number; points: Point[] }
 
 const box = (p: Point, w: number, h: number): Box => ({ x: p.x, y: p.y, hw: w / 2, hh: h / 2 });
 const overlaps = (a: Box, b: Box, pad = 0) => Math.abs(a.x - b.x) < a.hw + b.hw + pad && Math.abs(a.y - b.y) < a.hh + b.hh + pad;
 
 /**
  * Seats sit on an ellipse, evenly spaced by arc length, starting at the
- * bottom (you), each with its chip pile on the felt next to it. The largest
- * scale where no seat or chip pile overlaps another one or the centre wins.
+ * bottom (you). The largest scale where no seat overlaps another seat or the
+ * centre wins.
  */
 function layoutTable(w: number, h: number, n: number): Layout | null {
   if (!w || !h || !n) return null;
@@ -284,63 +277,11 @@ function layoutTable(w: number, h: number, n: number): Layout | null {
     const points = ellipsePoints(rx, ry, n);
     const seats = points.map((p) => box(p, sw, sh));
     const centre = box({ x: 0, y: 0 }, CENTER_W * scale, CENTER_H * scale);
-    const chips = placeChips(points, seats, centre, { w, h, rx, ry, scale });
-    fallback = { scale, rx, ry, points, chips: chips ?? points.map((p) => chipSpots(p, scale)[0]) };
+    fallback = { scale, rx, ry, points };
     const seatsClear = seats.every((s, i) => !overlaps(s, centre) && seats.slice(i + 1).every((o) => !overlaps(s, o, 6)));
-    if (seatsClear && chips) return fallback;
+    if (seatsClear) return fallback;
   }
   return fallback;
-}
-
-/**
- * Where a seat's chip pile may go, best first: between the seat and the
- * centre, then beside the seat (nearer the centre side first).
- */
-function chipSpots(p: Point, scale: number): Point[] {
-  const sw = SEAT_W * scale;
-  const sh = SEAT_H * scale;
-  const cw = CHIPS_W * scale;
-  const ch = CHIPS_H * scale;
-  const gap = CHIPS_GAP * scale;
-  // Leave the seat towards the centre, then step out past that edge.
-  const len = Math.hypot(p.x, p.y) || 1;
-  const ux = -p.x / len;
-  const uy = -p.y / len;
-  const tx = Math.abs(ux) > 1e-6 ? sw / 2 / Math.abs(ux) : Infinity;
-  const ty = Math.abs(uy) > 1e-6 ? sh / 2 / Math.abs(uy) : Infinity;
-  const t = Math.min(tx, ty);
-  const ex = p.x + ux * t;
-  const ey = p.y + uy * t;
-  const inward =
-    ty <= tx ? { x: ex, y: ey + Math.sign(uy) * (gap + ch / 2) } : { x: ex + Math.sign(ux) * (gap + cw / 2), y: ey };
-  // Beside the seat, lined up with its edge nearest the centre.
-  const y = p.y - Math.sign(p.y) * Math.min(Math.abs(p.y), (sh - ch) / 2);
-  const side = p.x > 1 ? -1 : 1;
-  const beside = (s: number) => ({ x: p.x + s * (sw / 2 + gap + cw / 2), y });
-  return [inward, beside(side), beside(-side)];
-}
-
-interface Bounds { w: number; h: number; rx: number; ry: number; scale: number }
-
-/** Picks a clear spot on the felt for every chip pile, or null if one doesn't fit. */
-function placeChips(points: Point[], seats: Box[], centre: Box, { w, h, rx, ry, scale }: Bounds): Point[] | null {
-  const placed: Box[] = [];
-  for (const p of points) {
-    const spot = chipSpots(p, scale)
-      .map((c) => box(c, CHIPS_W * scale, CHIPS_H * scale))
-      .find(
-        (c) =>
-          Math.abs(c.x) + c.hw <= w / 2 &&
-          Math.abs(c.y) + c.hh <= h / 2 &&
-          (c.x / rx) ** 2 + (c.y / ry) ** 2 <= 1 &&
-          !overlaps(c, centre, 4) &&
-          seats.every((s) => !overlaps(c, s, 2)) &&
-          placed.every((o) => !overlaps(c, o, 4)),
-      );
-    if (!spot) return null;
-    placed.push(spot);
-  }
-  return placed.map(({ x, y }) => ({ x, y }));
 }
 
 function ellipsePoints(rx: number, ry: number, n: number) {
@@ -747,51 +688,6 @@ function GoalBar({ total, live, goal }: { total: number; live: number; goal: num
     <div className="goal-bar" title={`${total} banked${live ? ` + ${live} this round` : ''} / ${goal}`}>
       <div className="goal-live" style={{ width: pct(total + Math.max(0, live)) }} />
       <div className="goal-banked" style={{ width: pct(total) }} />
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------- chips
-
-const CHIP_DENOMS = [100, 25, 10, 5, 1] as const;
-/** Chips drawn per stack; bigger stacks are capped (the total is written underneath). */
-const MAX_STACK = 8;
-
-/** Fewest chips that make up `total`, one stack per denomination, largest first. */
-function chipStacks(total: number): { value: number; count: number }[] {
-  let left = Math.max(0, Math.floor(total));
-  const out: { value: number; count: number }[] = [];
-  for (const value of CHIP_DENOMS) {
-    const count = Math.floor(left / value);
-    left -= count * value;
-    if (count) out.push({ value, count });
-  }
-  return out;
-}
-
-/** A player's banked points as stacks of poker chips on the felt. */
-function Chips({ total, x, y, scale }: { total: number; x: number; y: number; scale: number }) {
-  const stacks = chipStacks(total);
-  return (
-    <div
-      className="chips"
-      style={{ left: x, top: y, width: CHIPS_W, height: CHIPS_H, transform: `translate(-50%, -50%) scale(${scale})` }}
-      title={`${total} points banked`}
-    >
-      <div className="chip-stacks">
-        {stacks.length ? (
-          stacks.map(({ value, count }) => (
-            <div key={value} className={`chip-stack v${value}`}>
-              {Array.from({ length: Math.min(count, MAX_STACK) }, (_, i) => (
-                <span key={i} className="chip-coin" style={{ bottom: 3 + i * 4, zIndex: i, animationDelay: `${i * 50}ms` }} />
-              ))}
-            </div>
-          ))
-        ) : (
-          <div className="chip-empty" />
-        )}
-      </div>
-      <span className={`chips-total${total < 0 ? ' bad' : ''}`}>{total}</span>
     </div>
   );
 }

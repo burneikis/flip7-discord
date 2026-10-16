@@ -292,33 +292,6 @@ input, select {
 }
 @keyframes pop { from { transform: scale(0); } }
 
-/* ---------------------------------------------------------------- chips */
-.chips {
-  position: absolute; pointer-events: none;
-  display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 2px;
-  transition: left 0.3s, top 0.3s, transform 0.3s;
-}
-.chip-stacks { display: flex; align-items: flex-end; justify-content: center; height: 44px; }
-.chip-stack { position: relative; width: 26px; height: 100%; margin: 0 -1px; }
-.chip-coin {
-  position: absolute; left: 0; width: 26px; height: 12px; border-radius: 50%;
-  background: var(--chip); border: 2px dashed var(--chip-edge);
-  box-shadow: 0 3px 0 var(--chip-dark), 0 4px 5px #0007;
-  animation: chip-in 0.35s cubic-bezier(.3, 1.4, .5, 1) backwards;
-}
-@keyframes chip-in { from { transform: translateY(-18px); opacity: 0; } }
-.chip-stack.v100 { --chip: #26262b; --chip-edge: #e8e8e8; --chip-dark: #000; }
-.chip-stack.v25 { --chip: #1f9d55; --chip-edge: #fff; --chip-dark: #0f5e31; }
-.chip-stack.v10 { --chip: #2a6fd0; --chip-edge: #fff; --chip-dark: #17437f; }
-.chip-stack.v5 { --chip: #d33a3a; --chip-edge: #fff; --chip-dark: #7d1c1c; }
-.chip-stack.v1 { --chip: #eeeeee; --chip-edge: #2a6fd0; --chip-dark: #9a9a9a; }
-.chip-empty { width: 24px; height: 11px; border-radius: 50%; border: 2px dashed #ffffff40; }
-.chips-total {
-  font-size: 12px; line-height: 14px; font-weight: 800; color: #e8fff4; text-shadow: 0 1px 2px #000;
-  font-variant-numeric: tabular-nums; background: #0005; padding: 0 7px; border-radius: 999px;
-}
-.chips-total.bad { color: var(--danger); }
-
 /* ---------------------------------------------------------------- cards */
 .card {
   width: var(--card-w); height: var(--card-h);
