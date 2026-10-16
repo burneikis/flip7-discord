@@ -3,7 +3,11 @@
 #
 #   cp .env.example .env   # fill in values
 #   docker compose up -d --build
-#   docker compose logs cloudflared | grep trycloudflare   # quick-tunnel URL
+#
+# Uses a named Cloudflare tunnel (TUNNEL_TOKEN in .env) so the hostname is fixed:
+#   cloudflared tunnel create flip7
+#   cloudflared tunnel route dns flip7 flip7.example.com
+#   cloudflared tunnel token flip7   # -> TUNNEL_TOKEN
 services:
   flip7:
     build:
@@ -33,11 +37,9 @@ services:
     image: cloudflare/cloudflared:latest
     container_name: flip7-tunnel
     restart: unless-stopped
-    # Quick tunnel (random URL, changes on every restart). For a fixed hostname,
-    # set TUNNEL_TOKEN in .env and change the command to: tunnel --no-autoupdate run
-    command: tunnel --no-autoupdate --url http://flip7:3001
+    command: tunnel --no-autoupdate run --url http://flip7:3001
     environment:
-      TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:?set TUNNEL_TOKEN in .env}
     depends_on: [flip7]
     read_only: true
     cap_drop: [ALL]
