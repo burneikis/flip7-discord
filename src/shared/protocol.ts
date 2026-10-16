@@ -67,3 +67,26 @@ export type ClientMessage =
   | { type: 'rig'; key: CardKey };
 
 export const TURN_TIMER_CHOICES = [0, 15, 30, 45, 60, 90];
+
+/**
+ * Client animation pacing. Each flipped/played card is shown in the centre
+ * for REVEAL_MS before it flies to a hand; status callouts take STATUS_MS.
+ * The server uses the same numbers so bots and turn timers wait for the
+ * animations to finish.
+ */
+export const REVEAL_MS = 750;
+export const STATUS_MS = 300;
+
+export function eventDuration(e: GameEvent): number {
+  switch (e.kind) {
+    case 'flip':
+    case 'play':
+      return REVEAL_MS;
+    case 'bust':
+    case 'freeze':
+    case 'saved':
+      return STATUS_MS;
+    default:
+      return 0;
+  }
+}

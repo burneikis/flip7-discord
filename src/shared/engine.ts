@@ -1,4 +1,4 @@
-import { buildDeck, cardLabel, actionName, shuffle, type ActionCard, type Card, type NumberCard, type Variant } from './cards';
+import { buildDeck, cardLabel, cardWithArticle, actionName, shuffle, type ActionCard, type Card, type NumberCard, type Variant } from './cards';
 import { hasFlip7, hasSecondChance, hasZero, isBustLine, scoreLine, FLIP7_BONUS, type ScoreBreakdown } from './scoring';
 
 export type Status = 'active' | 'stayed' | 'busted';
@@ -278,7 +278,7 @@ export class Game {
         if (p.status === 'busted') return;
         const card = this.drawCard();
         if (!card) return;
-        this.say(`${p.name} flips ${cardLabel(card)}`);
+        this.say(`${p.name} flips ${cardWithArticle(card)}`);
         this.emit({ kind: 'flip', playerId: p.id, card });
         if (card.kind === 'number') this.gainNumber(p, card);
         else if (card.kind === 'modifier' && this.classic) p.line.push(card);
@@ -521,7 +521,7 @@ export class Game {
       return;
     }
     const step = { n: task.count - task.remaining + 1, of: task.count };
-    this.say(`${p.name} flips ${cardLabel(card)} (${step.n}/${step.of})`);
+    this.say(`${p.name} flips ${cardWithArticle(card)} (${step.n}/${step.of})`);
     this.emit({ kind: 'flip', playerId: p.id, card, step });
     const next: Task = { ...task, remaining: task.remaining - 1 };
     if (card.kind === 'number') {

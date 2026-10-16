@@ -33,8 +33,12 @@ Friends on your LAN/Tailscale can join via `http://<your-ip>:5173/?room=test`.
 - A player who drops keeps their lobby seat for `LOBBY_GRACE_MS` (45s) and
   the host keeps host status for `HOST_GRACE_MS` (30s).
 - Removed players can **Sit down** again from the lobby.
-- Optional turn timer (lobby): when it runs out you stay if you can,
-  otherwise the bot decides for you.
+- Optional turn timer (lobby): when it runs out you stay (or hit, if you
+  can't stay). Target choices (give/steal/swap...) are made by the bot.
+  The timer starts once the card animations have finished.
+- Only the host starts the next round.
+- While waiting for your turn you can queue Hit or Stay; it is sent as soon
+  as your turn comes.
 
 ### Tests
 

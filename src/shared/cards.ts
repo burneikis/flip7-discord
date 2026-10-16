@@ -120,6 +120,14 @@ export function actionName(action: ActionKind): string {
   return ACTION_NAMES[action];
 }
 
+/** The card label with an article, for sentences: "a 7", "an 8", "the Zero", "a Freeze". */
+export function cardWithArticle(card: Card): string {
+  const label = cardLabel(card);
+  if (label.startsWith('the ')) return label;
+  const an = card.kind === 'number' ? /^(8|11|18)$/.test(String(card.value)) || card.special === 'unlucky7' : false;
+  return `${an ? 'an' : 'a'} ${label}`;
+}
+
 export function cardLabel(card: Card): string {
   switch (card.kind) {
     case 'number':

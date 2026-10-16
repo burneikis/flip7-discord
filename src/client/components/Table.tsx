@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, type CSSProperties, type RefObject } from 'react';
-import { cardLabel, cardKeys, cardFromKey, VARIANT_NAMES, type Card, type Variant } from '../../shared/cards';
+import { cardLabel, cardWithArticle, cardKeys, cardFromKey, VARIANT_NAMES, type Card, type Variant } from '../../shared/cards';
 import type { GameEvent, Prompt } from '../../shared/engine';
-import type { ClientMessage, GameView, PlayerView } from '../../shared/protocol';
-import type { ScoreBreakdown } from '../../shared/scoring';
+import { REVEAL_MS, STATUS_MS, type ClientMessage, type GameView, type PlayerView } from '../../shared/protocol';
+import { scoreLine, type ScoreBreakdown } from '../../shared/scoring';
 import type { StateMessage } from '../useConnection';
 import { CardView, Snowflake } from './CardView';
 
@@ -12,15 +12,23 @@ type Decide = (d: Extract<ClientMessage, { type: 'decide' }>['decision']) => voi
 interface Props { state: StateMessage; game: GameView; send: Send }
 
 /** Unscaled seat and centre sizes; the layout scales them to fit. */
-const SEAT_W = 236;
+const SEAT_W = 264;
 const SEAT_H = 158;
 const CENTER_W = 300;
 const CENTER_H = 176;
 const CARD_W = 58;
+const CARD_H = 82;
 const CARD_GAP = 5;
-const ROW_W = SEAT_W - 20;
-/** How long each revealed card stays in the centre before the next one. */
-const REVEAL_MS = 650;
+/** Seat border + padding, and where the card row starts inside a seat. */
+const SEAT_PAD_X = 12;
+const CARDS_TOP = 46;
+const ROW_W = SEAT_W - 2 * SEAT_PAD_X;
+/** Modifier/Action cards sit in their own stack at the right of the row. */
+const EXTRA_MIN_STEP = 28;
+const ZONE_GAP = 14;
+/** The revealed card in the centre: offset from the board centre and size relative to a hand card. */
+const REVEAL_DY = -10;
+const REVEAL_SCALE = 74 / CARD_W;
 
 export function Table({ state, game, send }: Props) {
   const you = state.you;
@@ -31,18 +39,31 @@ export function Table({ state, game, send }: Props) {
   const [swapPick, setSwapPick] = useState<number | null>(null);
   const [hideSummary, setHideSummary] = useState(false);
   const [showLog, setShowLog] = useState(() => window.innerWidth >= 1200);
+  /** Hit/Stay chosen in advance, sent as soon as it is your turn. */
+  const [queued, setQueued] = useState<'hit' | 'stay' | null>(null);
   const boardRef = useRef<HTMLDivElement>(null);
   const size = useSize(boardRef);
   const fx = useEventEffects(game);
   const timeLeft = useCountdown(game.timeLeftMs, game);
   const ended = game.phase !== 'playing';
-  const summaryReady = useDelayedFlag(ended, game.flip7By ? 3600 : 1400, game.round);
+  const summaryReady = useDelayedFlag(ended && fx.idle, game.flip7By ? 3600 : 1400, game.round);
+  const canQueue = game.phase === 'playing' && me?.status === 'active' && !myPrompt;
 
   useEffect(() => setSwapPick(null), [prompt]);
   useEffect(() => setHideSummary(false), [game.round, game.phase]);
+  useEffect(() => setQueued(null), [game.round]);
+  useEffect(() => {
+    if (me?.status !== 'active') setQueued(null);
+  }, [me?.status]);
+  useEffect(() => {
+    if (!queued || myPrompt?.kind !== 'hitOrStay') return;
+    setQueued(null);
+    if (queued === 'hit' || myPrompt.canStay) send({ type: 'decide', decision: { type: queued } });
+  }, [myPrompt, queued, send]);
 
   const name = (id: string) => game.players.find((p) => p.id === id)?.name ?? '?';
   const decide: Decide = (decision) => send({ type: 'decide', decision });
+  const shown = (p: PlayerView) => displayPlayer(p, fx.hiddenCards, fx.heldPlayers, game.options.brutal);
 
   // What's clickable right now
   // (for a swap, once one card is picked, the same player's other cards are not)
@@ -71,7 +92,7 @@ export function Table({ state, game, send }: Props) {
   const myIdx = me ? game.players.indexOf(me) : 0;
   const ordered = game.players.map((_, i) => game.players[(myIdx + i) % game.players.length]);
   const layout = layoutTable(size.w, size.h, ordered.length);
-  const timerFrac = timeLeft !== null && state.room.turnSeconds ? timeLeft / (state.room.turnSeconds * 1000) : null;
+  const timerFrac = timeLeft !== null && state.room.turnSeconds ? Math.min(1, timeLeft / (state.room.turnSeconds * 1000)) : null;
 
   return (
     <div className="table">
@@ -100,13 +121,14 @@ export function Table({ state, game, send }: Props) {
             {layout && (
               <>
                 <div className="felt" style={{ width: layout.rx * 2, height: layout.ry * 2 }} />
-                <Center game={game} reveal={fx.reveal} name={name} scale={layout.scale} />
+                <Center game={game} reveal={fx.reveal} spent={fx.spent} name={name} scale={layout.scale} />
                 {ordered.map((p, i) => (
                   <Seat
                     key={p.id}
-                    p={p}
+                    p={shown(p)}
                     x={size.w / 2 + layout.points[i].x}
                     y={size.h / 2 + layout.points[i].y}
+                    toCenter={{ x: -layout.points[i].x / layout.scale, y: -layout.points[i].y / layout.scale + REVEAL_DY }}
                     scale={layout.scale}
                     goal={game.options.target}
                     roundOver={ended}
@@ -137,6 +159,9 @@ export function Table({ state, game, send }: Props) {
             clearSwap={() => setSwapPick(null)}
             timeLeft={timeLeft}
             timerFrac={timerFrac}
+            queued={canQueue ? queued : null}
+            canQueue={canQueue}
+            setQueued={setQueued}
           />
         </div>
         {showLog && <Log game={game} />}
@@ -144,7 +169,7 @@ export function Table({ state, game, send }: Props) {
 
       {fx.celebrate && <Flip7Celebration name={fx.celebrate} />}
       {ended && summaryReady && !fx.celebrate && !hideSummary && (
-        <Summary game={game} you={you} isHost={isHost} send={send} hide={() => setHideSummary(true)} />
+        <Summary game={game} isHost={isHost} hostId={state.room.hostId} send={send} hide={() => setHideSummary(true)} />
       )}
       {ended && summaryReady && hideSummary && (
         <button className="btn primary floating" onClick={() => setHideSummary(false)}>
@@ -228,14 +253,29 @@ function ellipsePoints(rx: number, ry: number, n: number) {
 
 interface Callout { id: number; kind: string; text: string }
 
+const isCardEvent = (e: GameEvent): e is Extract<GameEvent, { kind: 'flip' | 'play' }> => e.kind === 'flip' || e.kind === 'play';
+const isStatusEvent = (e: GameEvent): e is Extract<GameEvent, { kind: 'bust' | 'freeze' | 'stay' }> =>
+  e.kind === 'bust' || e.kind === 'freeze' || e.kind === 'stay';
+/** When a revealed card leaves the centre and flies to its hand. */
+const FLY_AT_MS = 450;
+/** Beyond this backlog (tab in background, slow device) old events are skipped. */
+const MAX_BACKLOG = 24;
+
 /**
- * Turns new game events into a paced sequence: flipped/played cards show in
- * the centre one after another, and seats get short callouts (BUST, FROZEN...).
+ * Turns new game events into a paced sequence: each flipped/played card is
+ * revealed in the centre, then flies to its hand; seats get short callouts
+ * (BUST, FROZEN...). Cards and status changes whose event has not been played
+ * yet are reported as `hiddenCards` / `heldPlayers` so the table can hold them
+ * back until their turn.
  */
 function useEventEffects(game: GameView) {
   const [reveal, setReveal] = useState<GameEvent | null>(null);
+  const [spent, setSpent] = useState(false);
   const [callouts, setCallouts] = useState<Record<string, Callout>>({});
   const [celebrate, setCelebrate] = useState<string | null>(null);
+  /** Events received but not played yet. */
+  const [pending, setPending] = useState<GameEvent[]>([]);
+  const [running, setRunning] = useState(false);
   const lastSeq = useRef<number | null>(null);
   const queue = useRef<GameEvent[]>([]);
   const busy = useRef(false);
@@ -248,6 +288,7 @@ function useEventEffects(game: GameView) {
   useEffect(() => {
     const later = (ms: number, f: () => void) => timers.current.push(window.setTimeout(f, ms));
     const name = (id: string) => gameRef.current.players.find((p) => p.id === id)?.name ?? '?';
+    const release = (...seqs: number[]) => setPending((list) => list.filter((e) => !seqs.includes(e.seq)));
     const callout = (pid: string, kind: string, text: string) => {
       const id = Math.random();
       setCallouts((c) => ({ ...c, [pid]: { id, kind, text } }));
@@ -255,8 +296,14 @@ function useEventEffects(game: GameView) {
     };
     const pump = () => {
       const e = queue.current.shift();
-      if (!e) return void (busy.current = false);
+      if (!e) {
+        busy.current = false;
+        setRunning(false);
+        return;
+      }
       busy.current = true;
+      // Catch up faster when events pile up.
+      const fast = queue.current.length > 6;
       let wait = 0;
       switch (e.kind) {
         case 'round':
@@ -266,19 +313,24 @@ function useEventEffects(game: GameView) {
         case 'flip':
         case 'play':
           setReveal(e);
-          wait = REVEAL_MS;
+          setSpent(false);
+          later(fast ? 150 : FLY_AT_MS, () => {
+            setSpent(true);
+            release(e.seq);
+          });
+          wait = fast ? 250 : REVEAL_MS;
           break;
         case 'bust':
           callout(e.playerId, 'bust', 'BUST!');
-          wait = 300;
+          wait = STATUS_MS;
           break;
         case 'freeze':
           callout(e.playerId, 'freeze', 'FROZEN');
-          wait = 300;
+          wait = STATUS_MS;
           break;
         case 'saved':
           callout(e.playerId, 'saved', 'SAVED!');
-          wait = 300;
+          wait = STATUS_MS;
           break;
         case 'stay':
           callout(e.playerId, 'stay', 'STAY');
@@ -288,27 +340,58 @@ function useEventEffects(game: GameView) {
           later(3300, () => setCelebrate(null));
           break;
       }
+      if (!isCardEvent(e)) release(e.seq);
       later(wait, pump);
     };
 
     const events = game.events;
     const newest = events.length ? events[events.length - 1].seq : 0;
-    if (lastSeq.current === null) {
-      // First render: show the latest card without replaying history.
+    if (lastSeq.current === null || newest < lastSeq.current) {
+      // First render (or a new game): show the latest card without replaying history.
       lastSeq.current = newest;
-      setReveal([...events].reverse().find((e) => e.kind === 'flip' || e.kind === 'play') ?? null);
+      setReveal([...events].reverse().find(isCardEvent) ?? null);
+      setSpent(true);
       return;
     }
     const fresh = events.filter((e) => e.seq > lastSeq.current!);
     if (!fresh.length) return;
     lastSeq.current = newest;
-    // If we fell far behind (tab in background), skip to the last few.
     queue.current.push(...fresh);
-    if (queue.current.length > 12) queue.current = queue.current.slice(-12);
-    if (!busy.current) pump();
+    setPending((list) => [...list, ...fresh.filter((e) => isCardEvent(e) || isStatusEvent(e))]);
+    if (queue.current.length > MAX_BACKLOG) {
+      const dropped = queue.current.splice(0, queue.current.length - MAX_BACKLOG).map((e) => e.seq);
+      setPending((list) => list.filter((e) => !dropped.includes(e.seq)));
+    }
+    if (!busy.current) {
+      setRunning(true);
+      pump();
+    }
   }, [game.events]);
 
-  return { reveal, callouts, celebrate };
+  // Events that arrived with this render have not reached the effect (and `pending`) yet.
+  const seen = lastSeq.current;
+  const unseen = seen === null ? [] : game.events.filter((e) => e.seq > seen);
+  const waiting = [...pending, ...unseen];
+  const hiddenCards = new Set(waiting.filter(isCardEvent).map((e) => e.card.id));
+  const heldPlayers = new Set(waiting.filter(isStatusEvent).map((e) => e.playerId));
+  const idle = waiting.length === 0 && !running;
+  return { reveal, spent, callouts, celebrate, hiddenCards, heldPlayers, idle };
+}
+
+/** A player as the table should show them right now: cards and status changes still waiting for their animation are held back. */
+function displayPlayer(p: PlayerView, hiddenCards: Set<number>, heldPlayers: Set<string>, brutal: boolean): PlayerView {
+  const line = p.line.filter((c) => !hiddenCards.has(c.id));
+  const held = heldPlayers.has(p.id);
+  if (line.length === p.line.length && !held) return p;
+  const status = held ? 'active' : p.status;
+  return {
+    ...p,
+    line,
+    status,
+    frozen: held ? false : p.frozen,
+    bustCardId: held ? null : p.bustCardId,
+    live: scoreLine(line, { busted: status === 'busted', brutal }),
+  };
 }
 
 function useCountdown(ms: number | null, key: unknown): number | null {
@@ -337,13 +420,15 @@ function useDelayedFlag(on: boolean, delay: number, key: unknown) {
 
 // ---------------------------------------------------------------- centre
 
-function Center({ game, reveal, name, scale }: { game: GameView; reveal: GameEvent | null; name: (id: string) => string; scale: number }) {
+interface CenterProps { game: GameView; reveal: GameEvent | null; spent: boolean; name: (id: string) => string; scale: number }
+
+function Center({ game, reveal, spent, name, scale }: CenterProps) {
   let caption: string | null = null;
   let card: Card | null = null;
   if (reveal?.kind === 'flip') {
     card = reveal.card;
-    caption = `${name(reveal.playerId)} flips`;
-    if (reveal.step) caption += ` ${reveal.step.n} of ${reveal.step.of}`;
+    caption = `${name(reveal.playerId)} flips ${cardWithArticle(reveal.card)}`;
+    if (reveal.step) caption += ` (${reveal.step.n} of ${reveal.step.of})`;
   } else if (reveal?.kind === 'play') {
     card = reveal.card;
     caption = reveal.playerId === reveal.targetId ? `${name(reveal.playerId)} keeps it` : `${name(reveal.playerId)} -> ${name(reveal.targetId)}`;
@@ -362,7 +447,7 @@ function Center({ game, reveal, name, scale }: { game: GameView; reveal: GameEve
       <div className="reveal">
         {card ? (
           <>
-            <CardView key={reveal!.seq} card={card} className="revealed" />
+            <CardView key={reveal!.seq} card={card} className={`revealed${spent ? ' spent' : ''}`} />
             <span className={`caption${reveal?.kind === 'flip' && reveal.step ? ' step' : ''}`}>{caption}</span>
           </>
         ) : (
@@ -384,6 +469,8 @@ interface SeatProps {
   p: PlayerView;
   x: number;
   y: number;
+  /** The centre reveal spot, relative to the seat centre in unscaled seat pixels. */
+  toCenter: { x: number; y: number };
   scale: number;
   goal: number;
   /** Totals already include this round's score. */
@@ -402,12 +489,11 @@ interface SeatProps {
 }
 
 function Seat(props: SeatProps) {
-  const { p, x, y, scale, goal, roundOver, isYou, isDealer, isTurn, deciding, timerFrac, target, pickable, picked, callout, onCard, onSeat } = props;
+  const { p, x, y, toCenter, scale, goal, roundOver, isYou, isDealer, isTurn, deciding, timerFrac, target, pickable, picked, callout, onCard, onSeat } = props;
   const busted = p.status === 'busted';
   const nums = p.line.filter((c) => c.kind === 'number');
   const extras = p.line.filter((c) => c.kind !== 'number');
   const cards = [...nums, ...extras];
-  const delays = useDealDelays(cards);
 
   // The bust card and the card it duplicated.
   const bustCard = busted ? p.line.find((c) => c.id === p.bustCardId) : undefined;
@@ -424,10 +510,14 @@ function Seat(props: SeatProps) {
   if (p.frozen) cls.push('frozen');
   if (canWin) cls.push('can-win');
 
-  // Fan the cards out; overlap them when the row gets long.
-  const sep = nums.length && extras.length ? 8 : 0;
+  // Number cards fan out from the left; Modifiers/Actions stack on the right,
+  // in their own zone. Overlap them when the row gets long.
   const n = cards.length;
-  const step = n > 1 ? Math.min(CARD_W + CARD_GAP, (ROW_W - sep - CARD_W) / (n - 1)) : 0;
+  const extrasW = extrasWidth(nums.length, extras.length);
+  const numsW = extras.length ? ROW_W - extrasW - ZONE_GAP : ROW_W;
+  const step = nums.length > 1 ? Math.min(CARD_W + CARD_GAP, (numsW - CARD_W) / (nums.length - 1)) : 0;
+  const extraStep = extras.length > 1 ? (extrasW - CARD_W) / (extras.length - 1) : 0;
+  const cardLeft = (i: number) => (i < nums.length ? i * step : ROW_W - extrasW + (i - nums.length) * extraStep);
 
   return (
     <div
@@ -451,12 +541,16 @@ function Seat(props: SeatProps) {
         {cards.map((c, i) => {
           const bustCls =
             c.id === p.bustCardId ? 'bust-card' : bustValue !== null && c.kind === 'number' && c.value === bustValue ? 'bust-dup' : busted ? 'dim' : '';
-          const style: CSSProperties = { left: i * step + (i >= nums.length ? sep : 0), zIndex: i, animationDelay: `${delays.get(c.id) ?? 0}ms` };
+          const left = cardLeft(i);
+          // Where the card flies in from: the revealed card in the centre.
+          const flyX = toCenter.x - (SEAT_PAD_X + left + CARD_W / 2 - SEAT_W / 2);
+          const flyY = toCenter.y - (CARDS_TOP + CARD_H / 2 - SEAT_H / 2);
+          const style = { left, zIndex: i, '--fly-x': `${flyX}px`, '--fly-y': `${flyY}px`, '--fly-s': REVEAL_SCALE } as CSSProperties;
           return (
             <CardView
               key={c.id}
               card={c}
-              className={bustCls}
+              className={`fly ${bustCls}`}
               style={style}
               selectable={pickable.has(c.id)}
               selected={picked === c.id}
@@ -464,6 +558,7 @@ function Seat(props: SeatProps) {
             />
           );
         })}
+        {nums.length > 0 && extras.length > 0 && <div className="zone-divider" style={{ left: ROW_W - extrasW - ZONE_GAP / 2 }} />}
         {!n && <span className="muted small empty">no cards yet</span>}
       </div>
       <div className="seat-foot small">
@@ -500,16 +595,16 @@ function Seat(props: SeatProps) {
   );
 }
 
-/** Cards that appear together are dealt one after another. */
-function useDealDelays(cards: Card[]) {
-  const delays = useRef(new Map<number, number>());
-  let fresh = 0;
-  const live = new Set(cards.map((c) => c.id));
-  for (const id of delays.current.keys()) if (!live.has(id)) delays.current.delete(id);
-  for (const c of cards) {
-    if (!delays.current.has(c.id)) delays.current.set(c.id, fresh++ * 140);
-  }
-  return delays.current;
+const rowWidth = (count: number) => (count ? CARD_W + (count - 1) * (CARD_W + CARD_GAP) : 0);
+
+/** Width of the Modifier/Action stack: spread out when the Number cards leave room, otherwise overlapped. */
+function extrasWidth(numCount: number, extraCount: number): number {
+  if (!extraCount) return 0;
+  const natural = rowWidth(extraCount);
+  if (!numCount) return Math.min(natural, ROW_W);
+  const free = ROW_W - ZONE_GAP - rowWidth(numCount);
+  const compact = Math.min(CARD_W + (extraCount - 1) * EXTRA_MIN_STEP, ROW_W * 0.45);
+  return Math.min(natural, Math.max(free, compact));
 }
 
 function GoalBar({ total, live, goal }: { total: number; live: number; goal: number }) {
@@ -535,6 +630,9 @@ interface BarProps {
   clearSwap: () => void;
   timeLeft: number | null;
   timerFrac: number | null;
+  queued: 'hit' | 'stay' | null;
+  canQueue: boolean;
+  setQueued: (q: 'hit' | 'stay' | null) => void;
 }
 
 function ActionBar(props: BarProps) {
@@ -556,11 +654,17 @@ function ActionBar(props: BarProps) {
   );
 }
 
-function ActionContent({ game, me, prompt, myPrompt, name, decide, swapPick, clearSwap }: BarProps) {
+function ActionContent({ game, me, prompt, myPrompt, name, decide, swapPick, clearSwap, queued, canQueue, setQueued }: BarProps) {
   const noStay = game.options.variant === 'classic' ? 'You need a card in front of you to stay' : 'You hold the Zero, you must hit';
   if (game.phase !== 'playing') return <span className="muted">Round over</span>;
-  if (!prompt) return <span className="muted">...</span>;
-  if (!myPrompt) return <span className="muted">{waitingText(prompt, name)}</span>;
+  if (!myPrompt) {
+    return (
+      <>
+        <span className="muted">{prompt ? waitingText(prompt, name) : '...'}</span>
+        {canQueue && <QueueButtons queued={queued} setQueued={setQueued} />}
+      </>
+    );
+  }
 
   switch (myPrompt.kind) {
     case 'hitOrStay': {
@@ -627,6 +731,22 @@ function ActionContent({ game, me, prompt, myPrompt, name, decide, swapPick, cle
         </>
       );
   }
+}
+
+/** Pick Hit or Stay before your turn; it is played as soon as your turn comes. */
+function QueueButtons({ queued, setQueued }: Pick<BarProps, 'queued' | 'setQueued'>) {
+  const toggle = (q: 'hit' | 'stay') => setQueued(queued === q ? null : q);
+  return (
+    <span className="queue">
+      <span className="small muted">{queued ? 'Queued:' : 'Queue:'}</span>
+      <button className={`btn tiny${queued === 'hit' ? ' primary' : ''}`} onClick={() => toggle('hit')} title="Hit as soon as it is your turn">
+        Hit
+      </button>
+      <button className={`btn tiny${queued === 'stay' ? ' primary' : ''}`} onClick={() => toggle('stay')} title="Stay as soon as it is your turn">
+        Stay
+      </button>
+    </span>
+  );
 }
 
 function waitingText(p: Prompt, name: (id: string) => string): string {
@@ -720,9 +840,11 @@ function breakdown(s: ScoreBreakdown): string {
   return parts.join(' ');
 }
 
-function Summary({ game, you, isHost, send, hide }: { game: GameView; you: string; isHost: boolean; send: Send; hide: () => void }) {
+interface SummaryProps { game: GameView; isHost: boolean; hostId: string | null; send: Send; hide: () => void }
+
+function Summary({ game, isHost, hostId, send, hide }: SummaryProps) {
   const over = game.phase === 'gameOver';
-  const seated = game.players.some((p) => p.id === you);
+  const host = game.players.find((p) => p.id === hostId);
   const ranked = [...game.players].sort((a, b) => b.total - a.total);
   const winners = game.winners.map((id) => game.players.find((p) => p.id === id)?.name).join(' & ');
   return (
@@ -756,17 +878,13 @@ function Summary({ game, you, isHost, send, hide }: { game: GameView; you: strin
           <button className="btn ghost" onClick={hide}>
             View table
           </button>
-          {!over && seated && (
-            <button className="btn primary" onClick={() => send({ type: 'nextRound' })}>
-              Next round
+          {isHost ? (
+            <button className="btn primary" onClick={() => send({ type: over ? 'endGame' : 'nextRound' })}>
+              {over ? 'Back to lobby' : 'Next round'}
             </button>
+          ) : (
+            <span className="muted">Waiting for {host?.name ?? 'the host'}...</span>
           )}
-          {over && isHost && (
-            <button className="btn primary" onClick={() => send({ type: 'endGame' })}>
-              Back to lobby
-            </button>
-          )}
-          {over && !isHost && <span className="muted">Waiting for the host...</span>}
         </div>
       </div>
     </div>

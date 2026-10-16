@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { buildDeck, cardFromKey, cardKey, type Card } from './cards';
+import { buildDeck, cardFromKey, cardKey, cardWithArticle, type Card } from './cards';
 import { Game, type GameOptions } from './engine';
 import type { Variant } from './cards';
 import { scoreLine } from './scoring';
-import { botDecision } from './bot';
+import { botDecision, timeoutDecision } from './bot';
 
 let nextId = 10_000;
 const cards = (...keys: string[]): Card[] => keys.map((k) => cardFromKey(k, nextId++));
@@ -450,5 +450,23 @@ describe('notes: flip counting, bust card, freeze, events', () => {
     ok(g.decide('a', { type: 'give', targetId: 'b' }));
     expect(g.player('b').frozen).toBe(true);
     expect(g.player('a').frozen).toBe(false);
+  });
+});
+
+describe('wording and timers', () => {
+  it('log says "flips a/an <card>"', () => {
+    const art = (k: string) => cardWithArticle(cardFromKey(k, 0));
+    expect(['n7', 'n8', 'n11', 'zero', 'unlucky7', 'lucky13', 'freeze', '+4'].map(art)).toEqual([
+      'a 7', 'an 8', 'an 11', 'the Zero', 'an Unlucky 7', 'a Lucky 13', 'a Freeze', 'a +4',
+    ]);
+    const g = classic(2, ['n8', 'n6']);
+    expect(g.log.map((e) => e.text)).toContain('A flips an 8');
+  });
+
+  it('running out of time stays, or hits when staying is not allowed', () => {
+    const g = setup(2, ['n5', 'n6', 'n9']);
+    expect(timeoutDecision(g, 'a')).toEqual({ type: 'stay' });
+    const z = setup(2, ['zero', 'n6', 'n9']);
+    expect(timeoutDecision(z, 'a')).toEqual({ type: 'hit' });
   });
 });
