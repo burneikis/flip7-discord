@@ -34,11 +34,11 @@ function BrowserApp() {
 }
 
 function Game({ identity }: { identity: Identity }) {
-  const { state, error, connected, send } = useConnection(identity);
+  const { state, error, showOffline, send } = useConnection(identity);
 
   return (
     <div className="app">
-      {!connected && <div className="banner">Connecting to server...</div>}
+      {showOffline && <div className="banner">Connection lost, reconnecting...</div>}
       {error && <div className="toast">{error}</div>}
       {!state ? (
         <div className="center muted">Joining table...</div>

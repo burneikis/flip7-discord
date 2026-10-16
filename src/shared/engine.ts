@@ -10,6 +10,10 @@ export interface Player extends PlayerInit {
   /** Number cards and Modifier cards in front of the player. */
   line: Card[];
   status: Status;
+  /** Stayed because of a Freeze card (this round). */
+  frozen: boolean;
+  /** The card that busted this player (this round). */
+  bustCardId: number | null;
   total: number;
   lastRound: ScoreBreakdown | null;
 }
@@ -44,6 +48,20 @@ export interface GameOptions {
 export const DEFAULT_OPTIONS: GameOptions = { variant: 'classic', brutal: false, target: 200 };
 export interface LogEntry { seq: number; text: string }
 
+/** Structured happenings, so clients can animate what the log describes. */
+export type GameEvent =
+  | { seq: number; kind: 'round'; round: number }
+  /** A card turned over from the deck. `step` is set during Flip Three / Flip Four. */
+  | { seq: number; kind: 'flip'; playerId: string; card: Card; step?: { n: number; of: number } }
+  /** An Action or Modifier given to (or kept by) a player. */
+  | { seq: number; kind: 'play'; playerId: string; targetId: string; card: Card }
+  | { seq: number; kind: 'bust'; playerId: string; cardId: number }
+  | { seq: number; kind: 'freeze'; playerId: string }
+  | { seq: number; kind: 'saved'; playerId: string }
+  | { seq: number; kind: 'stay'; playerId: string }
+  | { seq: number; kind: 'flip7'; playerId: string };
+type EventInput = GameEvent extends infer E ? (E extends GameEvent ? Omit<E, 'seq'> : never) : never;
+
 type Task =
   | { t: 'deal'; order: string[] }
   | { t: 'draw'; playerId: string }
@@ -57,6 +75,7 @@ type Task =
   | { t: 'endRound' };
 
 const MAX_LOG = 200;
+const MAX_EVENTS = 100;
 
 /**
  * Server-authoritative Flip 7 rules engine, for both the classic game and
@@ -79,11 +98,13 @@ export class Game {
   flip7By: string | null = null;
   winners: string[] = [];
   log: LogEntry[] = [];
+  events: GameEvent[] = [];
 
   private queue: Task[] = [];
   /** Brutal Flip 7 choice: undefined = not chosen, null = took +15, string = penalised player. */
   private bonusChoice: string | null | undefined;
   private logSeq = 0;
+  private eventSeq = 0;
 
   constructor(
     players: PlayerInit[],
@@ -92,7 +113,7 @@ export class Game {
     deck?: Card[],
   ) {
     if (players.length < 1) throw new Error('Need at least one player');
-    this.players = players.map((p) => ({ ...p, line: [], status: 'active', total: 0, lastRound: null }));
+    this.players = players.map((p) => ({ ...p, line: [], status: 'active', frozen: false, bustCardId: null, total: 0, lastRound: null }));
     if (options.variant === 'classic') this.options = { ...options, brutal: false };
     this.deck = deck ? [...deck] : shuffle(buildDeck(options.variant), rng);
     // Last seat deals first so the first card goes to seat 0.
@@ -139,6 +160,7 @@ export class Game {
           this.prompt = null;
           p.status = 'stayed';
           this.say(`${p.name} stays`);
+          this.emit({ kind: 'stay', playerId });
           this.queue.unshift({ t: 'nextTurn' });
         } else return 'Choose hit or stay';
         break;
@@ -218,6 +240,8 @@ export class Game {
     for (const p of this.players) {
       p.line = [];
       p.status = 'active';
+      p.frozen = false;
+      p.bustCardId = null;
       p.lastRound = null;
     }
     this.flip7By = null;
@@ -226,6 +250,7 @@ export class Game {
     this.phase = 'playing';
     this.turn = (this.dealer + 1) % this.players.length;
     this.say(`--- Round ${this.round}: ${this.players[this.dealer].name} deals ---`);
+    this.emit({ kind: 'round', round: this.round });
     this.queue = [{ t: 'deal', order: this.seatOrderFrom(this.turn) }];
     this.run();
   }
@@ -254,6 +279,7 @@ export class Game {
         const card = this.drawCard();
         if (!card) return;
         this.say(`${p.name} flips ${cardLabel(card)}`);
+        this.emit({ kind: 'flip', playerId: p.id, card });
         if (card.kind === 'number') this.gainNumber(p, card);
         else if (card.kind === 'modifier' && this.classic) p.line.push(card);
         else this.queue.unshift({ t: 'give', holderId: p.id, card });
@@ -270,6 +296,7 @@ export class Game {
         if (p.status === 'active') {
           p.status = 'stayed';
           this.say(`${p.name} must stay`);
+          this.emit({ kind: 'stay', playerId: p.id });
         }
         return;
       }
@@ -332,6 +359,7 @@ export class Game {
       const idx = p.line.findIndex((c) => c.kind === 'action' && c.action === 'secondChance');
       this.discardPile.push(...p.line.splice(idx, 1), card);
       this.say(`Second Chance saves ${p.name}! The duplicate ${cardLabel(card)} is discarded`);
+      this.emit({ kind: 'saved', playerId: p.id });
       return;
     }
     p.line.push(card);
@@ -350,10 +378,14 @@ export class Game {
     if (this.flip7By || p.status === 'busted') return;
     if (isBustLine(p.line)) {
       p.status = 'busted';
+      // The card just added is the one that caused the duplicate.
+      p.bustCardId = p.line[p.line.length - 1].id;
       this.say(`${p.name} BUSTS!`);
+      this.emit({ kind: 'bust', playerId: p.id, cardId: p.bustCardId });
     } else if (hasFlip7(p.line)) {
       this.flip7By = p.id;
       this.say(`${p.name} FLIPS 7! The round ends.`);
+      this.emit({ kind: 'flip7', playerId: p.id });
       this.prompt = null;
       this.dropQueue();
       this.queue = [{ t: 'endRound' }];
@@ -409,6 +441,7 @@ export class Game {
     } else {
       this.say(`${holder.name} plays ${cardLabel(card)} on ${who}`);
     }
+    this.emit({ kind: 'play', playerId: holderId, targetId, card });
     if (card.kind === 'modifier') target.line.push(card);
     else if (card.kind === 'action') this.queue.unshift({ t: 'resolve', playerId: targetId, card });
     else target.line.push(card);
@@ -429,7 +462,9 @@ export class Game {
         this.discardPile.push(card);
         if (p.status === 'active') {
           p.status = 'stayed';
+          p.frozen = true;
           this.say(`${p.name} is frozen and banks their points`);
+          this.emit({ kind: 'freeze', playerId: p.id });
         }
         return;
       case 'secondChance':
@@ -485,7 +520,9 @@ export class Game {
       this.queue.unshift(...task.setAside.map((c): Task => ({ t: 'give', holderId: p.id, card: c })));
       return;
     }
-    this.say(`${p.name} flips ${cardLabel(card)} (${task.count - task.remaining + 1}/${task.count})`);
+    const step = { n: task.count - task.remaining + 1, of: task.count };
+    this.say(`${p.name} flips ${cardLabel(card)} (${step.n}/${step.of})`);
+    this.emit({ kind: 'flip', playerId: p.id, card, step });
     const next: Task = { ...task, remaining: task.remaining - 1 };
     if (card.kind === 'number') {
       this.gainNumber(p, card);
@@ -595,6 +632,11 @@ export class Game {
   private seatOrderFrom(start: number): string[] {
     const n = this.players.length;
     return Array.from({ length: n }, (_, i) => this.players[(start + i) % n].id);
+  }
+
+  private emit(e: EventInput) {
+    this.events.push({ ...e, seq: ++this.eventSeq } as GameEvent);
+    if (this.events.length > MAX_EVENTS) this.events.splice(0, this.events.length - MAX_EVENTS);
   }
 
   private say(text: string) {

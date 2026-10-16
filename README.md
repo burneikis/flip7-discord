@@ -27,6 +27,15 @@ Friends on your LAN/Tailscale can join via `http://<your-ip>:5173/?room=test`.
   specific situations (Unlucky 7, Swap, Flip Four...).
 - `BOT_DELAY_MS=300 npm run dev` speeds bots up.
 
+### Connections and timers
+- The server pings every socket every 20s and the client pings the server
+  every 15s, so idle lobbies survive Discord/cloudflared idle timeouts.
+- A player who drops keeps their lobby seat for `LOBBY_GRACE_MS` (45s) and
+  the host keeps host status for `HOST_GRACE_MS` (30s).
+- Removed players can **Sit down** again from the lobby.
+- Optional turn timer (lobby): when it runs out you stay if you can,
+  otherwise the bot decides for you.
+
 ### Tests
 
 ```bash

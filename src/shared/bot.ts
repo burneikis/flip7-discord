@@ -133,3 +133,10 @@ function utility(game: Game, me: string, change: (lines: Lines) => void): number
   }
   return u;
 }
+
+/** What happens when a human's turn timer runs out: stay if allowed, otherwise let the bot pick. */
+export function timeoutDecision(game: Game, playerId: string): Decision {
+  const pr = game.prompt;
+  if (pr?.kind === 'hitOrStay' && pr.canStay) return { type: 'stay' };
+  return botDecision(game, playerId);
+}

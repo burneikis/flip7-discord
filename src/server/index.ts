@@ -3,9 +3,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { WebSocketServer, WebSocket } from 'ws';
 import { Game } from '../shared/engine';
-import { botDecision } from '../shared/bot';
+import { botDecision, timeoutDecision } from '../shared/bot';
 import { cardKey, cardKeys, VARIANTS, type Variant } from '../shared/cards';
-import type { ClientMessage, GameView, RoomView, ServerMessage } from '../shared/protocol';
+import { TURN_TIMER_CHOICES, type ClientMessage, type GameView, type RoomView, type ServerMessage } from '../shared/protocol';
+import type { Prompt } from '../shared/engine';
 
 try {
   process.loadEnvFile(path.resolve(import.meta.dirname, '../../.env'));
@@ -20,6 +21,12 @@ const DEV = process.env.DEV === '1';
 const BOT_DELAY_MS = Number(process.env.BOT_DELAY_MS ?? 900);
 /** How long a disconnected player's decisions wait before a bot plays for them. */
 const OFFLINE_GRACE_MS = Number(process.env.OFFLINE_GRACE_MS ?? 15_000);
+/** Lobby seats and host status survive short disconnects (Discord/tunnel hiccups). */
+const LOBBY_GRACE_MS = Number(process.env.LOBBY_GRACE_MS ?? 45_000);
+const HOST_GRACE_MS = Number(process.env.HOST_GRACE_MS ?? 30_000);
+/** Rooms nobody is connected to are dropped after this long. */
+const EMPTY_ROOM_MS = 10 * 60_000;
+const HEARTBEAT_MS = 20_000;
 const MAX_PLAYERS = 18;
 const DIST = path.resolve(import.meta.dirname, '../../dist');
 const BOT_NAMES = ['Ada', 'Bix', 'Cog', 'Dot', 'Echo', 'Fizz', 'Gizmo', 'Hex', 'Ion', 'Jinx', 'Kilo', 'Lux'];
@@ -32,10 +39,16 @@ class Room {
   variant: Variant = 'classic';
   brutal = false;
   target = 200;
+  turnSeconds = 0;
   game: Game | null = null;
   sockets = new Map<WebSocket, string>();
+  /** Last name each player joined with, so a removed player can sit down again. */
+  names = new Map<string, string>();
   offlineSince = new Map<string, number>();
+  emptySince: number | null = null;
   timer: NodeJS.Timeout | null = null;
+  /** Turn timer: the prompt it applies to and when it runs out. */
+  private deadline: { prompt: Prompt; at: number } | null = null;
 
   constructor(readonly id: string) {}
 
@@ -44,10 +57,30 @@ class Room {
     return false;
   }
 
-  ensureHost() {
-    if (this.hostId && this.isConnected(this.hostId)) return;
+  private offlineFor(pid: string, now = Date.now()) {
+    if (this.isConnected(pid)) return 0;
+    return now - (this.offlineSince.get(pid) ?? now);
+  }
+
+  /** Keep the host through short disconnects; hand over only after HOST_GRACE_MS. */
+  ensureHost(): boolean {
+    const prev = this.hostId;
+    const host = this.members.find((m) => m.id === this.hostId);
+    if (host && this.offlineFor(host.id) < HOST_GRACE_MS) return false;
     const next = this.members.find((m) => !m.isBot && this.isConnected(m.id));
-    if (next) this.hostId = next.id;
+    this.hostId = next?.id ?? (host ? host.id : null);
+    return this.hostId !== prev;
+  }
+
+  /** Periodic cleanup. Returns true when something visible changed. */
+  sweep(now: number): boolean {
+    let changed = false;
+    if (!this.game) {
+      const before = this.members.length;
+      this.members = this.members.filter((m) => m.isBot || this.offlineFor(m.id, now) < LOBBY_GRACE_MS);
+      changed = this.members.length !== before;
+    }
+    return this.ensureHost() || changed;
   }
 
   roomView(): RoomView {
@@ -57,6 +90,7 @@ class Room {
       variant: this.variant,
       brutal: this.brutal,
       target: this.target,
+      turnSeconds: this.turnSeconds,
       members: this.members.map((m) => ({ ...m, connected: m.isBot || this.isConnected(m.id) })),
     };
   }
@@ -76,6 +110,8 @@ class Room {
         connected: p.isBot || this.isConnected(p.id),
         line: p.line,
         status: p.status,
+        frozen: p.frozen,
+        bustCardId: p.bustCardId,
         total: p.total,
         live: g.liveScore(p),
         lastRound: p.lastRound,
@@ -84,6 +120,8 @@ class Room {
       discardCount: g.discardPile.length,
       prompt: g.prompt,
       log: g.log.slice(-80),
+      events: g.events.slice(-40),
+      timeLeftMs: this.deadline && this.deadline.prompt === g.prompt ? Math.max(0, this.deadline.at - Date.now()) : null,
       flip7By: g.flip7By,
       winners: g.winners,
       options: g.options,
@@ -91,6 +129,7 @@ class Room {
   }
 
   broadcast() {
+    this.updateDeadline();
     const room = this.roomView();
     const game = this.gameView();
     for (const [ws, pid] of this.sockets) {
@@ -99,7 +138,21 @@ class Room {
     this.scheduleAutomation();
   }
 
-  /** Bots act after a short delay; offline humans get a bot after a grace period. */
+  /** Start the turn timer whenever a human gets a new prompt. */
+  private updateDeadline() {
+    const g = this.game;
+    const prompt = g?.phase === 'playing' ? g.prompt : null;
+    if (!g || !prompt || !this.turnSeconds || g.player(prompt.playerId).isBot) {
+      this.deadline = null;
+      return;
+    }
+    if (this.deadline?.prompt !== prompt) this.deadline = { prompt, at: Date.now() + this.turnSeconds * 1000 };
+  }
+
+  /**
+   * Bots act after a short delay; offline humans get a bot after a grace
+   * period; humans who run out the turn timer get a default decision.
+   */
   scheduleAutomation() {
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
@@ -107,16 +160,20 @@ class Room {
     if (!g || g.phase !== 'playing' || !g.prompt) return;
     const prompt = g.prompt;
     const pid = prompt.playerId;
-    let delay: number;
+    const now = Date.now();
+    let delay = Infinity;
+    let decideFor = botDecision;
     if (g.player(pid).isBot) delay = BOT_DELAY_MS;
-    else if (!this.isConnected(pid)) {
-      const since = this.offlineSince.get(pid) ?? Date.now();
-      delay = Math.max(BOT_DELAY_MS, OFFLINE_GRACE_MS - (Date.now() - since));
-    } else return;
+    else if (!this.isConnected(pid)) delay = Math.max(BOT_DELAY_MS, OFFLINE_GRACE_MS - this.offlineFor(pid, now));
+    if (this.deadline?.prompt === prompt && this.deadline.at - now < delay) {
+      delay = Math.max(0, this.deadline.at - now);
+      decideFor = timeoutDecision;
+    }
+    if (delay === Infinity) return;
     this.timer = setTimeout(() => {
       if (this.game !== g || g.prompt !== prompt) return;
-      const err = g.decide(pid, botDecision(g, pid));
-      if (err) console.error(`[${this.id}] bot decision rejected: ${err}`);
+      const err = g.decide(pid, decideFor(g, pid));
+      if (err) console.error(`[${this.id}] automatic decision rejected: ${err}`);
       this.broadcast();
     }, delay);
   }
@@ -178,9 +235,11 @@ function handle(ws: WebSocket, msg: ClientMessage, ctx: { room: Room | null }): 
     ctx.room = room;
     room.sockets.set(ws, pid);
     room.offlineSince.delete(pid);
+    room.emptySince = null;
+    room.names.set(pid, name);
     const existing = room.members.find((m) => m.id === pid);
     if (existing) existing.name = room.game?.players.some((p) => p.id === pid) ? existing.name : name;
-    else room.members.push({ id: pid, name, isBot: false });
+    else if (room.members.length < MAX_PLAYERS || room.game) room.members.push({ id: pid, name, isBot: false });
     room.ensureHost();
     return null;
   }
@@ -203,6 +262,17 @@ function handle(ws: WebSocket, msg: ClientMessage, ctx: { room: Room | null }): 
     case 'kick': {
       if (!isHost || !inLobby) return 'Only the host can remove players in the lobby';
       room.members = room.members.filter((m) => m.id !== msg.playerId);
+      for (const [sock, id] of room.sockets) {
+        if (id === msg.playerId) send(sock, { type: 'error', message: 'The host removed you from the table. You can sit down again.' });
+      }
+      return null;
+    }
+    case 'sit': {
+      if (!inLobby) return 'Wait for the current game to end';
+      if (room.members.some((m) => m.id === pid)) return null;
+      if (room.members.length >= MAX_PLAYERS) return 'Table is full';
+      room.members.push({ id: pid, name: room.names.get(pid) ?? 'Player', isBot: false });
+      room.ensureHost();
       return null;
     }
     case 'setOptions': {
@@ -210,12 +280,14 @@ function handle(ws: WebSocket, msg: ClientMessage, ctx: { room: Room | null }): 
       if (msg.variant && VARIANTS.includes(msg.variant)) room.variant = msg.variant;
       if (typeof msg.brutal === 'boolean') room.brutal = msg.brutal;
       if (typeof msg.target === 'number' && msg.target >= 25 && msg.target <= 1000) room.target = Math.round(msg.target);
+      if (typeof msg.turnSeconds === 'number' && TURN_TIMER_CHOICES.includes(msg.turnSeconds)) room.turnSeconds = msg.turnSeconds;
       return null;
     }
     case 'start': {
       if (!isHost || !inLobby) return 'Only the host can start';
       const seated = room.members.slice(0, MAX_PLAYERS);
       if (seated.length < 2) return 'Need at least 2 players (add a bot?)';
+      if (seated.some((m) => !m.isBot && !room.isConnected(m.id))) return 'Someone is reconnecting; wait a moment';
       room.game = new Game(seated, { variant: room.variant, brutal: room.brutal, target: room.target });
       return null;
     }
@@ -231,7 +303,8 @@ function handle(ws: WebSocket, msg: ClientMessage, ctx: { room: Room | null }): 
     case 'endGame': {
       if (!isHost) return 'Only the host can end the game';
       room.game = null;
-      room.members = room.members.filter((m) => m.isBot || room.isConnected(m.id));
+      // Offline players keep their seat for the lobby grace period (see sweep).
+      for (const m of room.members) if (!m.isBot && !room.isConnected(m.id) && !room.offlineSince.has(m.id)) room.offlineSince.set(m.id, Date.now());
       return null;
     }
     case 'rig': {
@@ -293,15 +366,21 @@ const server = http.createServer((req, res) => {
 
 const wss = new WebSocketServer({ server, path: '/ws' });
 
+const alive = new WeakSet<WebSocket>();
+
 wss.on('connection', (ws) => {
   const ctx: { room: Room | null } = { room: null };
+  alive.add(ws);
+  ws.on('pong', () => alive.add(ws));
   ws.on('message', async (raw) => {
+    alive.add(ws);
     let msg: ClientMessage;
     try {
       msg = JSON.parse(String(raw));
     } catch {
       return send(ws, { type: 'error', message: 'Bad message' });
     }
+    if (msg.type === 'ping') return send(ws, { type: 'pong' });
     if (msg.type === 'join' && msg.accessToken) {
       const user = await verifyDiscordUser(msg.accessToken).catch(() => null);
       if (!user) return send(ws, { type: 'error', message: 'Could not verify your Discord account' });
@@ -322,15 +401,37 @@ wss.on('connection', (ws) => {
     if (!room) return;
     const pid = room.sockets.get(ws);
     room.sockets.delete(ws);
-    if (pid && !room.isConnected(pid)) {
-      room.offlineSince.set(pid, Date.now());
-      if (!room.game) room.members = room.members.filter((m) => m.id !== pid);
-    }
-    room.ensureHost();
-    if (room.sockets.size === 0 && !room.members.some((m) => !m.isBot)) rooms.delete(room.id);
+    // Seats and host status are kept for a grace period (see Room.sweep).
+    if (pid && !room.isConnected(pid)) room.offlineSince.set(pid, Date.now());
+    if (room.sockets.size === 0) room.emptySince = Date.now();
     room.broadcast();
   });
 });
+
+// Keep idle connections open through proxies (Discord, cloudflared drop idle
+// websockets) and drop sockets that stopped answering.
+setInterval(() => {
+  for (const ws of wss.clients) {
+    if (!alive.has(ws)) {
+      ws.terminate();
+      continue;
+    }
+    alive.delete(ws);
+    ws.ping();
+  }
+}, HEARTBEAT_MS);
+
+setInterval(() => {
+  const now = Date.now();
+  for (const room of rooms.values()) {
+    if (room.sockets.size === 0 && room.emptySince && now - room.emptySince > EMPTY_ROOM_MS) {
+      if (room.timer) clearTimeout(room.timer);
+      rooms.delete(room.id);
+      continue;
+    }
+    if (room.sweep(now)) room.broadcast();
+  }
+}, 2_000);
 
 server.listen(PORT, () => {
   console.log(`Flip 7 server on http://localhost:${PORT}${DEV ? ' (dev mode: deck rigging enabled)' : ''}`);

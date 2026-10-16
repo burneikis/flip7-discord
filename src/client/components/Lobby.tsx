@@ -1,5 +1,5 @@
 import { VARIANTS, VARIANT_NAMES } from '../../shared/cards';
-import type { ClientMessage } from '../../shared/protocol';
+import { TURN_TIMER_CHOICES, type ClientMessage } from '../../shared/protocol';
 import type { StateMessage } from '../useConnection';
 import { isInDiscord } from '../identity';
 
@@ -7,6 +7,7 @@ export function Lobby({ state, send }: { state: StateMessage; send: (m: ClientMe
   const { room, you } = state;
   const isHost = room.hostId === you;
   const host = room.members.find((m) => m.id === room.hostId);
+  const seated = room.members.some((m) => m.id === you);
 
   return (
     <div className="lobby">
@@ -20,6 +21,7 @@ export function Lobby({ state, send }: { state: StateMessage; send: (m: ClientMe
           {room.members.map((m) => (
             <li key={m.id}>
               <span className={m.connected ? '' : 'muted'}>{m.name}</span>
+              {!m.connected && <span className="tag offline">reconnecting</span>}
               {m.id === you && <span className="tag you">you</span>}
               {m.isBot && <span className="tag">bot</span>}
               {m.id === room.hostId && <span className="tag host">host</span>}
@@ -68,7 +70,27 @@ export function Lobby({ state, send }: { state: StateMessage; send: (m: ClientMe
             />
             points
           </label>
+          <label>
+            Turn timer
+            <select value={room.turnSeconds} disabled={!isHost} onChange={(e) => send({ type: 'setOptions', turnSeconds: Number(e.target.value) })}>
+              {TURN_TIMER_CHOICES.map((s) => (
+                <option key={s} value={s}>
+                  {s ? `${s} seconds` : 'Off'}
+                </option>
+              ))}
+            </select>
+            {room.turnSeconds > 0 && <span className="muted small">(out of time: you stay, or a bot picks for you)</span>}
+          </label>
         </div>
+
+        {!seated && (
+          <div className="row notice">
+            <span>You are not seated at this table.</span>
+            <button className="btn primary" onClick={() => send({ type: 'sit' })}>
+              Sit down
+            </button>
+          </div>
+        )}
 
         {isHost ? (
           <div className="row">
