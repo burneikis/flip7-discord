@@ -1,26 +1,47 @@
-import { useMemo, useState } from 'react';
-import { initialIdentity, rememberName, type Identity } from './identity';
+import { useEffect, useMemo, useState } from 'react';
+import { discordIdentity, initialIdentity, isInDiscord, rememberName, type Identity } from './identity';
 import { useConnection } from './useConnection';
 import { Lobby } from './components/Lobby';
 import { Table } from './components/Table';
 
 export function App() {
+  return isInDiscord() ? <DiscordApp /> : <BrowserApp />;
+}
+
+function DiscordApp() {
+  const [identity, setIdentity] = useState<Identity | null>(null);
+  const [failure, setFailure] = useState<string | null>(null);
+  useEffect(() => {
+    discordIdentity().then(setIdentity, (e: Error) => {
+      console.error(e);
+      setFailure(e.message);
+    });
+  }, []);
+  if (failure) return <div className="center">Could not sign in with Discord: {failure}</div>;
+  if (!identity) return <div className="center muted">Signing in with Discord...</div>;
+  return <Game identity={identity} />;
+}
+
+function BrowserApp() {
   const initial = useMemo(initialIdentity, []);
   const [name, setName] = useState(initial.name);
   const identity = useMemo<Identity | null>(
     () => (name ? { playerId: initial.playerId, roomId: initial.roomId, name } : null),
     [initial, name],
   );
-  const { state, error, connected, send } = useConnection(identity);
-
   if (!identity) return <NameScreen onSubmit={(n) => (rememberName(n), setName(n))} />;
+  return <Game identity={identity} />;
+}
+
+function Game({ identity }: { identity: Identity }) {
+  const { state, error, connected, send } = useConnection(identity);
 
   return (
     <div className="app">
       {!connected && <div className="banner">Connecting to server...</div>}
       {error && <div className="toast">{error}</div>}
       {!state ? (
-        <div className="center muted">Joining room "{identity.roomId}"...</div>
+        <div className="center muted">Joining table...</div>
       ) : state.game ? (
         <Table state={state} game={state.game} send={send} />
       ) : (

@@ -44,7 +44,7 @@ export type ServerMessage =
   | { type: 'error'; message: string };
 
 export type ClientMessage =
-  | { type: 'join'; roomId: string; playerId: string; name: string }
+  | { type: 'join'; roomId: string; playerId: string; name: string; accessToken?: string }
   | { type: 'addBot' }
   | { type: 'kick'; playerId: string }
   | { type: 'setOptions'; brutal?: boolean; target?: number }

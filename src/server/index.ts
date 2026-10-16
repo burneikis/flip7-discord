@@ -7,7 +7,15 @@ import { botDecision } from '../shared/bot';
 import { cardKey, ALL_CARD_KEYS } from '../shared/cards';
 import type { ClientMessage, GameView, RoomView, ServerMessage } from '../shared/protocol';
 
+try {
+  process.loadEnvFile(path.resolve(import.meta.dirname, '../../.env'));
+} catch {
+  // no .env: fine for browser-only testing
+}
+
 const PORT = Number(process.env.PORT ?? 3001);
+const DISCORD_CLIENT_ID = process.env.VITE_DISCORD_CLIENT_ID;
+const DISCORD_CLIENT_SECRET = process.env.DISCORD_CLIENT_SECRET;
 const DEV = process.env.DEV === '1';
 const BOT_DELAY_MS = Number(process.env.BOT_DELAY_MS ?? 900);
 /** How long a disconnected player's decisions wait before a bot plays for them. */
@@ -114,6 +122,45 @@ class Room {
 
 const rooms = new Map<string, Room>();
 
+// ------------------------------------------------------------------ discord
+
+/** Exchange the OAuth code from the Embedded App SDK for an access token. */
+async function exchangeCode(code: string): Promise<{ status: number; body: unknown }> {
+  if (!DISCORD_CLIENT_ID || !DISCORD_CLIENT_SECRET) {
+    return { status: 500, body: { error: 'Server is missing VITE_DISCORD_CLIENT_ID / DISCORD_CLIENT_SECRET in .env' } };
+  }
+  const res = await fetch('https://discord.com/api/v10/oauth2/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id: DISCORD_CLIENT_ID,
+      client_secret: DISCORD_CLIENT_SECRET,
+      grant_type: 'authorization_code',
+      code,
+    }),
+  });
+  const data = (await res.json()) as { access_token?: string };
+  if (!res.ok || !data.access_token) {
+    console.error('Discord token exchange failed', res.status, data);
+    return { status: 502, body: { error: 'Discord token exchange failed' } };
+  }
+  return { status: 200, body: { access_token: data.access_token } };
+}
+
+const verifiedTokens = new Map<string, { id: string; name: string }>();
+
+/** Ask Discord who owns this token, so players can't pretend to be each other. */
+async function verifyDiscordUser(token: string): Promise<{ id: string; name: string } | null> {
+  const cached = verifiedTokens.get(token);
+  if (cached) return cached;
+  const res = await fetch('https://discord.com/api/v10/users/@me', { headers: { Authorization: `Bearer ${token}` } });
+  if (!res.ok) return null;
+  const u = (await res.json()) as { id: string; username: string; global_name?: string | null };
+  const user = { id: `discord-${u.id}`, name: u.global_name || u.username };
+  verifiedTokens.set(token, user);
+  return user;
+}
+
 function send(ws: WebSocket, msg: ServerMessage) {
   if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
 }
@@ -214,6 +261,22 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, { 'content-type': 'text/plain' }).end('ok');
     return;
   }
+  if (url.pathname === '/api/token' && req.method === 'POST') {
+    let raw = '';
+    req.on('data', (chunk) => (raw += chunk));
+    req.on('end', async () => {
+      let result: { status: number; body: unknown };
+      try {
+        const { code } = JSON.parse(raw) as { code?: string };
+        result = code ? await exchangeCode(code) : { status: 400, body: { error: 'Missing code' } };
+      } catch (e) {
+        console.error(e);
+        result = { status: 500, body: { error: 'Token exchange error' } };
+      }
+      res.writeHead(result.status, { 'content-type': 'application/json' }).end(JSON.stringify(result.body));
+    });
+    return;
+  }
   let file = path.join(DIST, path.normalize(decodeURIComponent(url.pathname)).replace(/^([/\\])+/, ''));
   if (!file.startsWith(DIST)) return void res.writeHead(403).end();
   if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) file = path.join(DIST, 'index.html');
@@ -229,12 +292,17 @@ const wss = new WebSocketServer({ server, path: '/ws' });
 
 wss.on('connection', (ws) => {
   const ctx: { room: Room | null } = { room: null };
-  ws.on('message', (raw) => {
+  ws.on('message', async (raw) => {
     let msg: ClientMessage;
     try {
       msg = JSON.parse(String(raw));
     } catch {
       return send(ws, { type: 'error', message: 'Bad message' });
+    }
+    if (msg.type === 'join' && msg.accessToken) {
+      const user = await verifyDiscordUser(msg.accessToken).catch(() => null);
+      if (!user) return send(ws, { type: 'error', message: 'Could not verify your Discord account' });
+      msg = { ...msg, playerId: user.id, name: user.name };
     }
     let err: string | null;
     try {
@@ -263,4 +331,5 @@ wss.on('connection', (ws) => {
 
 server.listen(PORT, () => {
   console.log(`Flip 7 server on http://localhost:${PORT}${DEV ? ' (dev mode: deck rigging enabled)' : ''}`);
+  if (!DISCORD_CLIENT_ID || !DISCORD_CLIENT_SECRET) console.log('Discord credentials not set in .env (browser play still works)');
 });

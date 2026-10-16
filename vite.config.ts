@@ -8,7 +8,11 @@ export default defineConfig({
   server: {
     port: 5173,
     host: true,
-    proxy: { '/ws': { target: SERVER, ws: true } },
+    allowedHosts: ['.trycloudflare.com'],
+    proxy: {
+      '/ws': { target: SERVER, ws: true },
+      '/api': { target: SERVER },
+    },
   },
   build: {
     outDir: 'dist',

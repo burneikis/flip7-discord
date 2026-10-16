@@ -1,5 +1,6 @@
 import type { ClientMessage } from '../../shared/protocol';
 import type { StateMessage } from '../useConnection';
+import { isInDiscord } from '../identity';
 
 export function Lobby({ state, send }: { state: StateMessage; send: (m: ClientMessage) => void }) {
   const { room, you } = state;
@@ -12,7 +13,7 @@ export function Lobby({ state, send }: { state: StateMessage; send: (m: ClientMe
       <div className="subtitle">with a Vengeance</div>
       <div className="panel">
         <div className="panel-title">
-          Room <code>{room.id}</code> - {room.members.length} player{room.members.length === 1 ? '' : 's'}
+          {isInDiscord() ? 'Table' : <>Room <code>{room.id}</code></>} - {room.members.length} player{room.members.length === 1 ? '' : 's'}
         </div>
         <ul className="members">
           {room.members.map((m) => (
@@ -69,9 +70,13 @@ export function Lobby({ state, send }: { state: StateMessage; send: (m: ClientMe
           <div className="muted">Waiting for {host?.name ?? 'the host'} to start...</div>
         )}
       </div>
-      <div className="muted small">
-        Friends join by opening this page with <code>?room={room.id}</code>.
-      </div>
+      {isInDiscord() ? (
+        <div className="muted small">Friends join by launching the activity in this voice channel.</div>
+      ) : (
+        <div className="muted small">
+          Friends join by opening this page with <code>?room={room.id}</code>.
+        </div>
+      )}
     </div>
   );
 }

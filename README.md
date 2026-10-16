@@ -67,8 +67,36 @@ From the rulebook plus the official FAQ (theop.games/pages/flip-7-wav-faqs):
 - Brutal mode: negative round scores, Modifiers may hit busted players,
   Flip 7 may take 15 from another player instead of +15.
 
-## Next: Discord
+## Running it in Discord
 
-Not done yet. Plan: Embedded App SDK in `src/client/identity.ts`
-(Discord user id/name, `instanceId` as room), OAuth token exchange endpoint on
-the server, cloudflared tunnel + URL mapping in the Developer Portal.
+How it works: Discord loads the activity in an iframe through its proxy
+(`<client-id>.discordsays.com`), which forwards to the URL mapped to `/`.
+The server serves the client, `/ws` and `/api/token` on one port, so one
+mapping is enough. Inside Discord, players are their Discord accounts
+(verified server-side) and the room is the activity instance.
+
+### One-time setup
+1. https://discord.com/developers/applications -> **New Application**.
+   (Friends need to be on a [developer team](https://discord.com/developers/teams)
+   that owns the app to launch it; see below.)
+2. **OAuth2**: copy Client ID and Client Secret into `.env`
+   (`cp .env.example .env`). Add redirect `https://127.0.0.1` (placeholder).
+3. **Installation**: enable User Install and Guild Install.
+4. **Activities -> Settings**: tick **Enable Activities**.
+5. `sudo pacman -S cloudflared`
+
+### Each session
+```bash
+npm run discord     # builds client, serves everything on :3001
+npm run tunnel      # prints https://<random>.trycloudflare.com
+```
+Then **Activities -> URL Mappings**: set `/` -> `<random>.trycloudflare.com`
+(no `https://`). Quick tunnels get a new URL each run, so update the mapping
+each time (or set up a named cloudflared tunnel for a fixed hostname).
+
+Join a voice channel, open the App Launcher (rocket icon), pick the app.
+
+### Debugging
+Easiest: run Discord in a browser (discord.com/app) and use the browser's
+DevTools (F12). The desktop PTB client also has View -> Developer -> Toggle
+Developer Tools.

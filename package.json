@@ -9,11 +9,14 @@
     "build": "vite build",
     "start": "tsx src/server/index.ts",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "discord": "vite build && tsx src/server/index.ts",
+    "tunnel": "cloudflared tunnel --url http://localhost:3001"
   },
   "license": "UNLICENSED",
   "type": "module",
   "dependencies": {
+    "@discord/embedded-app-sdk": "^2.5.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "tsx": "^4.23.15",
