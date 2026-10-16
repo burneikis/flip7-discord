@@ -11,7 +11,7 @@ const PLAYERS = ['a', 'b', 'c', 'd'].map((id) => ({ id, name: id.toUpperCase(), 
 
 /** Seat 0 is dealt first and takes the first turn. Deck is drawn top-first in the given order. */
 function setup(n: number, deck: string[], opts: Partial<GameOptions> = {}) {
-  return new Game(PLAYERS.slice(0, n), { variant: 'vengeance', brutal: false, target: 200, ...opts }, () => 0.5, cards(...deck));
+  return new Game(PLAYERS.slice(0, n), { variant: 'vengeance', brutal: false, target: 200, winRule: 'roundEnd', ...opts }, () => 0.5, cards(...deck));
 }
 const classic = (n: number, deck: string[], opts: Partial<GameOptions> = {}) => setup(n, deck, { variant: 'classic', ...opts });
 const keys = (g: Game, id: string) => g.player(id).line.map(cardKey);
@@ -216,6 +216,46 @@ describe('basic flow', () => {
     expect(g.winners).toEqual(['a']);
   });
 
+  it('round-end rule: the round is finished and the highest total wins', () => {
+    const g = setup(2, ['n12', 'n2', 'n13', 'n11', 'n10'], { target: 25 });
+    ok(g.decide('a', { type: 'hit' })); // a: 12 + 13 = 25
+    ok(g.decide('b', { type: 'hit' })); // b: 2 + 11
+    ok(g.decide('a', { type: 'stay' }));
+    expect(g.phase).toBe('playing');
+    ok(g.decide('b', { type: 'hit' })); // b: 2 + 11 + 10 = 23
+    ok(g.decide('b', { type: 'stay' }));
+    expect(g.phase).toBe('gameOver');
+    expect(g.winners).toEqual(['a']);
+  });
+
+  it('instant rule: banking the target wins on the spot', () => {
+    const g = setup(3, ['n12', 'n2', 'n3', 'n13', 'n11'], { target: 25, winRule: 'instant' });
+    ok(g.decide('a', { type: 'hit' })); // a: 12 + 13
+    ok(g.decide('b', { type: 'hit' })); // b: 2 + 11
+    ok(g.decide('c', { type: 'stay' }));
+    ok(g.decide('a', { type: 'stay' }));
+    expect(g.phase).toBe('gameOver');
+    expect(g.winners).toEqual(['a']);
+    expect(g.player('a').total).toBe(25);
+    expect(g.events.some((e) => e.kind === 'win' && e.playerId === 'a')).toBe(true);
+  });
+
+  it('instant rule: being frozen over the target also wins', () => {
+    const g = setup(2, ['n12', 'n2', 'n13', 'freeze'], { target: 25, winRule: 'instant' });
+    ok(g.decide('a', { type: 'hit' })); // a: 12 + 13
+    ok(g.decide('b', { type: 'hit' })); // freeze
+    ok(g.decide('b', { type: 'give', targetId: 'a' }));
+    expect(g.phase).toBe('gameOver');
+    expect(g.winners).toEqual(['a']);
+  });
+
+  it('Flip 7 event carries the seven cards', () => {
+    const g = setup(1, ['n1', 'n2', 'n3', 'n4', 'n5', 'n6', 'n8']);
+    for (let i = 0; i < 6; i++) ok(g.decide('a', { type: 'hit' }));
+    const e = g.events.find((x) => x.kind === 'flip7');
+    expect(e && e.kind === 'flip7' && e.cards.map((c) => c.value)).toEqual([1, 2, 3, 4, 5, 6, 8]);
+  });
+
   it('reshuffles the discard pile when the deck runs out', () => {
     const g = setup(2, ['n1', 'n2']);
     ok(g.decide('a', { type: 'stay' }));
@@ -401,7 +441,7 @@ describe('bots', () => {
       let s = seed;
       const rng = () => ((s = (s * 16807) % 2147483647) / 2147483647);
       const variant: Variant = seed % 4 < 2 ? 'classic' : 'vengeance';
-      const g = new Game(PLAYERS.slice(0, 2 + (seed % 3)), { variant, brutal: seed % 2 === 0, target: 200 }, rng);
+      const g = new Game(PLAYERS.slice(0, 2 + (seed % 3)), { variant, brutal: seed % 2 === 0, target: 200, winRule: seed % 5 === 0 ? 'instant' : 'roundEnd' }, rng);
       let steps = 0;
       while (g.phase !== 'gameOver') {
         if (g.phase === 'roundEnd') g.nextRound();

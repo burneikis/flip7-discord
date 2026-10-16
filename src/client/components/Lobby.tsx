@@ -1,5 +1,6 @@
 import { VARIANTS, VARIANT_NAMES } from '../../shared/cards';
 import { TURN_TIMER_CHOICES, type ClientMessage } from '../../shared/protocol';
+import type { WinRule } from '../../shared/engine';
 import type { StateMessage } from '../useConnection';
 import { isInDiscord } from '../identity';
 
@@ -69,6 +70,13 @@ export function Lobby({ state, send }: { state: StateMessage; send: (m: ClientMe
               onChange={(e) => send({ type: 'setOptions', target: Number(e.target.value) })}
             />
             points
+          </label>
+          <label>
+            Winner
+            <select value={room.winRule} disabled={!isHost} onChange={(e) => send({ type: 'setOptions', winRule: e.target.value as WinRule })}>
+              <option value="roundEnd">Finish the round, highest score wins</option>
+              <option value="instant">First to bank {room.target} wins instantly</option>
+            </select>
           </label>
           <label>
             Turn timer

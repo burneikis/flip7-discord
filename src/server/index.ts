@@ -6,7 +6,7 @@ import { Game } from '../shared/engine';
 import { botDecision, timeoutDecision } from '../shared/bot';
 import { cardKey, cardKeys, VARIANTS, type Variant } from '../shared/cards';
 import { TURN_TIMER_CHOICES, eventDuration, type ClientMessage, type GameView, type RoomView, type ServerMessage } from '../shared/protocol';
-import type { Prompt } from '../shared/engine';
+import { WIN_RULES, type Prompt, type WinRule } from '../shared/engine';
 
 try {
   process.loadEnvFile(path.resolve(import.meta.dirname, '../../.env'));
@@ -29,6 +29,8 @@ const EMPTY_ROOM_MS = 10 * 60_000;
 const HEARTBEAT_MS = 20_000;
 const MAX_PLAYERS = 18;
 const DIST = path.resolve(import.meta.dirname, '../../dist');
+/** Discarded cards sent to clients; they hide the ones still on the table or mid-animation. */
+const DISCARD_SHOWN = 12;
 const BOT_NAMES = ['Ada', 'Bix', 'Cog', 'Dot', 'Echo', 'Fizz', 'Gizmo', 'Hex', 'Ion', 'Jinx', 'Kilo', 'Lux'];
 
 interface Member { id: string; name: string; isBot: boolean }
@@ -39,6 +41,7 @@ class Room {
   variant: Variant = 'classic';
   brutal = false;
   target = 200;
+  winRule: WinRule = 'roundEnd';
   turnSeconds = 0;
   game: Game | null = null;
   sockets = new Map<WebSocket, string>();
@@ -94,6 +97,7 @@ class Room {
       variant: this.variant,
       brutal: this.brutal,
       target: this.target,
+      winRule: this.winRule,
       turnSeconds: this.turnSeconds,
       members: this.members.map((m) => ({ ...m, connected: m.isBot || this.isConnected(m.id) })),
     };
@@ -122,6 +126,7 @@ class Room {
       })),
       deckCount: g.deck.length,
       discardCount: g.discardPile.length,
+      discardTop: g.discardPile.slice(-DISCARD_SHOWN),
       prompt: g.prompt,
       log: g.log.slice(-80),
       events: g.events.slice(-40),
@@ -305,6 +310,7 @@ function handle(ws: WebSocket, msg: ClientMessage, ctx: { room: Room | null }): 
       if (msg.variant && VARIANTS.includes(msg.variant)) room.variant = msg.variant;
       if (typeof msg.brutal === 'boolean') room.brutal = msg.brutal;
       if (typeof msg.target === 'number' && msg.target >= 25 && msg.target <= 1000) room.target = Math.round(msg.target);
+      if (msg.winRule && WIN_RULES.includes(msg.winRule)) room.winRule = msg.winRule;
       if (typeof msg.turnSeconds === 'number' && TURN_TIMER_CHOICES.includes(msg.turnSeconds)) room.turnSeconds = msg.turnSeconds;
       return null;
     }
@@ -313,7 +319,7 @@ function handle(ws: WebSocket, msg: ClientMessage, ctx: { room: Room | null }): 
       const seated = room.members.slice(0, MAX_PLAYERS);
       if (seated.length < 2) return 'Need at least 2 players (add a bot?)';
       if (seated.some((m) => !m.isBot && !room.isConnected(m.id))) return 'Someone is reconnecting; wait a moment';
-      room.game = new Game(seated, { variant: room.variant, brutal: room.brutal, target: room.target });
+      room.game = new Game(seated, { variant: room.variant, brutal: room.brutal, target: room.target, winRule: room.winRule });
       return null;
     }
     case 'decide': {
