@@ -1,8 +1,6 @@
 # Flip 7 - Discord Activity
 
-Private, for-our-own-group implementation of *Flip 7* (default, ruleset 3.1)
-and *Flip 7: With a Vengeance* (The Op / USAopoly), selectable in the lobby.
-Not for distribution.
+Implementation of *Flip 7* (default, ruleset 3.1) and *Flip 7: With a Vengeance* (The Op / USAopoly), selectable in the lobby.
 
 ## Quick start
 
