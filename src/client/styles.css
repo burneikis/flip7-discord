@@ -345,7 +345,6 @@ input, select {
 .hs-info { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; text-align: right; min-width: 0; overflow: hidden; max-height: 52px; }
 .hs-buttons { display: flex; gap: 10px; }
 .btn.hs { width: 104px; padding-left: 0; padding-right: 0; }
-.hs-extra { display: flex; align-items: center; justify-content: flex-start; }
 @media (max-width: 560px) {
   .hit-stay { gap: 8px; }
   .btn.hs { width: 78px; font-size: 16px; }
