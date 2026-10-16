@@ -1,6 +1,7 @@
 import type { Card, CardKey, Variant } from './cards';
 import type { Decision, GameEvent, GameOptions, LogEntry, Phase, Prompt, Status, WinRule } from './engine';
 import type { ScoreBreakdown } from './scoring';
+import type { Rules } from './rules';
 
 export interface MemberView { id: string; name: string; isBot: boolean; connected: boolean }
 
@@ -45,6 +46,8 @@ export interface RoomView {
   brutal: boolean;
   target: number;
   winRule: WinRule;
+  /** Deck and rules used when variant is 'custom'. */
+  custom: Rules;
   /** Turn timer in seconds, 0 = off. */
   turnSeconds: number;
   members: MemberView[];
@@ -62,7 +65,7 @@ export type ClientMessage =
   /** Take a seat again (e.g. after being removed from the lobby). */
   | { type: 'sit' }
   | { type: 'ping' }
-  | { type: 'setOptions'; variant?: Variant; brutal?: boolean; target?: number; winRule?: WinRule; turnSeconds?: number }
+  | { type: 'setOptions'; variant?: Variant; brutal?: boolean; target?: number; winRule?: WinRule; turnSeconds?: number; custom?: Rules }
   | { type: 'start' }
   | { type: 'decide'; decision: Decision }
   | { type: 'nextRound' }

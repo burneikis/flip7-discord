@@ -3,6 +3,7 @@ import { TURN_TIMER_CHOICES, type ClientMessage } from '../../shared/protocol';
 import type { WinRule } from '../../shared/engine';
 import type { StateMessage } from '../useConnection';
 import { isInDiscord } from '../identity';
+import { CustomRules } from './CustomRules';
 
 export function Lobby({ state, send }: { state: StateMessage; send: (m: ClientMessage) => void }) {
   const { room, you } = state;
@@ -14,6 +15,7 @@ export function Lobby({ state, send }: { state: StateMessage; send: (m: ClientMe
     <div className="lobby">
       <h1 className="logo">FLIP 7</h1>
       {room.variant === 'vengeance' && <div className="subtitle">with a Vengeance</div>}
+      {room.variant === 'custom' && <div className="subtitle">custom rules</div>}
       <div className="panel">
         <div className="panel-title">
           {isInDiscord() ? 'Table' : <>Room <code>{room.id}</code></>} - {room.members.length} player{room.members.length === 1 ? '' : 's'}
@@ -48,7 +50,10 @@ export function Lobby({ state, send }: { state: StateMessage; send: (m: ClientMe
               ))}
             </select>
           </label>
-          {room.variant === 'vengeance' && (
+          {room.variant === 'custom' && (
+            <CustomRules rules={room.custom} editable={isHost} onChange={(custom) => send({ type: 'setOptions', custom })} />
+          )}
+          {room.variant !== 'classic' && (
           <label className="check">
             <input
               type="checkbox"
@@ -58,7 +63,7 @@ export function Lobby({ state, send }: { state: StateMessage; send: (m: ClientMe
             />
             <span>
               Brutal mode
-              <span className="hint muted small">Scores can go negative, Modifiers can hit busted players, and a Flip 7 can take 15 from someone.</span>
+              <span className="hint muted small">Scores can go negative, Modifiers can hit busted players, and a Flip 7 can take {room.variant === 'custom' ? room.custom.flip7Bonus : 15} from someone.</span>
             </span>
           </label>
           )}

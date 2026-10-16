@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from 'react';
-import { cardLabel, cardWithArticle, cardKeys, cardFromKey, VARIANT_NAMES, type Card, type NumberCard, type Variant } from '../../shared/cards';
+import { cardLabel, cardWithArticle, cardKeys, cardFromKey, VARIANT_NAMES, type Card, type DeckCounts, type NumberCard } from '../../shared/cards';
+import { rulesFor } from '../../shared/engine';
 import type { GameEvent, Prompt } from '../../shared/engine';
 import { REVEAL_MS, STATUS_MS, type ClientMessage, type GameView, type PlayerView } from '../../shared/protocol';
 import { scoreLine, type ScoreBreakdown } from '../../shared/scoring';
@@ -144,7 +145,7 @@ export function Table({ state, game, send }: Props) {
         {state.room.turnSeconds > 0 && <span className="chip">{state.room.turnSeconds}s turns</span>}
         {game.options.brutal && <span className="tag brutal">BRUTAL</span>}
         <span className="spacer" />
-        {state.devMode && <DevPanel send={send} variant={game.options.variant} />}
+        {state.devMode && <DevPanel send={send} deck={rulesFor(game.options).deck} />}
         <button className={`btn tiny ghost${showLog ? ' on' : ''}`} onClick={() => setShowLog((v) => !v)}>
           Log
         </button>
@@ -225,7 +226,7 @@ export function Table({ state, game, send }: Props) {
         {showLog && <Log game={game} />}
       </div>
 
-      {fx.celebrate && <Flip7Celebration name={fx.celebrate.name} cards={fx.celebrate.cards} />}
+      {fx.celebrate && <Flip7Celebration name={fx.celebrate.name} cards={fx.celebrate.cards} bonus={rulesFor(game.options).flip7Bonus} />}
       {ended && summaryReady && !fx.celebrate && !hideSummary && (
         <Summary game={game} isHost={isHost} hostId={state.room.hostId} send={send} hide={() => setHideSummary(true)} />
       )}
@@ -777,20 +778,22 @@ function ActionContent({ game, prompt, myPrompt, name, decide, swapPick, clearSw
           )}
         </>
       );
-    case 'flip7Bonus':
+    case 'flip7Bonus': {
+      const bonus = rulesFor(game.options).flip7Bonus;
       return (
         <>
-          <span>Flip 7! Take +15, or take 15 from:</span>
+          <span>Flip 7! Take +{bonus}, or take {bonus} from:</span>
           <button className="btn primary" onClick={() => decide({ type: 'flip7Bonus', targetId: null })}>
-            +15 for me
+            +{bonus} for me
           </button>
           {myPrompt.options.map((id) => (
             <button key={id} className="btn danger name-btn" onClick={() => decide({ type: 'flip7Bonus', targetId: id })} title={name(id)}>
-              -15 {name(id)}
+              -{bonus} {name(id)}
             </button>
           ))}
         </>
       );
+    }
   }
 }
 
@@ -803,7 +806,7 @@ function ActionContent({ game, prompt, myPrompt, name, decide, swapPick, clearSw
 function HitStay({ game, me, prompt, myPrompt, name, decide, queued, setQueued }: BarProps) {
   const live = myPrompt?.kind === 'hitOrStay';
   const canStay = myPrompt?.kind === 'hitOrStay' ? myPrompt.canStay : true;
-  const noStay = game.options.variant === 'classic' ? 'You need a card in front of you to stay' : 'You hold the Zero, you must hit';
+  const noStay = me && !me.line.length && rulesFor(game.options).stayNeedsCard ? 'You need a card in front of you to stay' : 'You hold the Zero, you must hit';
   const choose = (q: 'hit' | 'stay') => {
     if (live && !queued) decide({ type: q });
     else setQueued(queued === q ? null : q);
@@ -888,7 +891,7 @@ function waitingText(p: Prompt, name: (id: string) => string): string {
 
 const CONFETTI_COLORS = ['#ff5a5f', '#ffcc33', '#3ddc84', '#33b5ff', '#b05cff', '#ffffff'];
 
-function Flip7Celebration({ name, cards }: { name: string; cards: NumberCard[] }) {
+function Flip7Celebration({ name, cards, bonus }: { name: string; cards: NumberCard[]; bonus: number }) {
   const [pieces] = useState(() =>
     Array.from({ length: 70 }, (_, i) => ({
       left: Math.random() * 100,
@@ -909,7 +912,7 @@ function Flip7Celebration({ name, cards }: { name: string; cards: NumberCard[] }
         ))}
       </div>
       <div className="flip7-title">FLIP 7!</div>
-      <div className="flip7-name">{name} ends the round with +15</div>
+      <div className="flip7-name">{name} ends the round with +{bonus}</div>
       {pieces.map((c, i) => (
         <span
           key={i}
@@ -1021,13 +1024,13 @@ function Summary({ game, isHost, hostId, send, hide }: SummaryProps) {
 
 // ---------------------------------------------------------------- dev
 
-function DevPanel({ send, variant }: { send: Send; variant: Variant }) {
+function DevPanel({ send, deck }: { send: Send; deck: DeckCounts }) {
   const [key, setKey] = useState('n7');
   return (
     <span className="dev">
       DEV next card:
       <select value={key} onChange={(e) => setKey(e.target.value)}>
-        {cardKeys(variant).map((k) => (
+        {cardKeys(deck).map((k) => (
           <option key={k} value={k}>
             {cardLabel(cardFromKey(k, 0))}
           </option>

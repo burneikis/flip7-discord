@@ -1,7 +1,11 @@
-/** classic = Flip 7 (ruleset 3.1, 94 cards); vengeance = Flip 7: With a Vengeance (108 cards). */
-export type Variant = 'classic' | 'vengeance';
-export const VARIANTS: Variant[] = ['classic', 'vengeance'];
-export const VARIANT_NAMES: Record<Variant, string> = { classic: 'Flip 7', vengeance: 'Flip 7: With a Vengeance' };
+/**
+ * classic = Flip 7 (ruleset 3.1, 94 cards); vengeance = Flip 7: With a
+ * Vengeance (108 cards); custom = host-edited deck and rules (see rules.ts).
+ */
+export type Variant = 'classic' | 'vengeance' | 'custom';
+export type PresetVariant = Exclude<Variant, 'custom'>;
+export const VARIANTS: Variant[] = ['classic', 'vengeance', 'custom'];
+export const VARIANT_NAMES: Record<Variant, string> = { classic: 'Flip 7', vengeance: 'Flip 7: With a Vengeance', custom: 'Custom rules' };
 
 export type ClassicAction = 'freeze' | 'flipThree' | 'secondChance';
 export type VengeanceAction = 'justOneMore' | 'swap' | 'steal' | 'discard' | 'flipFour';
@@ -20,6 +24,7 @@ export type Card = NumberCard | ModifierCard | ActionCard;
  * +2..+10, x2, and the action names.
  */
 export type CardKey = string;
+export type DeckCounts = Record<CardKey, number>;
 
 /**
  * Deck compositions. Edit here if your deck differs.
@@ -31,7 +36,7 @@ export type CardKey = string;
  * (6 normal + Unlucky 7), N copies of every other N, plus the Zero, one of
  * each Modifier and two of each Action.
  */
-export const DECK_COUNTS: Record<Variant, Record<CardKey, number>> = {
+export const DECK_COUNTS: Record<PresetVariant, DeckCounts> = {
   classic: {
     n12: 12, n11: 11, n10: 10, n9: 9, n8: 8, n7: 7, n6: 6,
     n5: 5, n4: 4, n3: 3, n2: 2, n1: 1, n0: 1,
@@ -83,14 +88,17 @@ export function modifierLabel(card: ModifierCard): string {
   return modifierText(card, '÷2', '×2');
 }
 
-export function cardKeys(variant: Variant): CardKey[] {
-  return Object.keys(DECK_COUNTS[variant]);
+const countsOf = (source: PresetVariant | DeckCounts): DeckCounts => (typeof source === 'string' ? DECK_COUNTS[source] : source);
+
+/** Card keys present in a deck (a preset name or explicit counts). */
+export function cardKeys(source: PresetVariant | DeckCounts): CardKey[] {
+  return Object.entries(countsOf(source)).filter(([, n]) => n > 0).map(([k]) => k);
 }
 
-export function buildDeck(variant: Variant = 'classic'): Card[] {
+export function buildDeck(source: PresetVariant | DeckCounts = 'classic'): Card[] {
   const deck: Card[] = [];
   let id = 1;
-  for (const [key, count] of Object.entries(DECK_COUNTS[variant])) {
+  for (const [key, count] of Object.entries(countsOf(source))) {
     for (let i = 0; i < count; i++) deck.push(cardFromKey(key, id++));
   }
   return deck;

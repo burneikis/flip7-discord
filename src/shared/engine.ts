@@ -1,5 +1,6 @@
 import { buildDeck, cardLabel, cardWithArticle, actionName, shuffle, type ActionCard, type Card, type NumberCard, type Variant } from './cards';
-import { hasFlip7, hasSecondChance, hasZero, isBustLine, numberCards, scoreLine, FLIP7_BONUS, type ScoreBreakdown } from './scoring';
+import { hasFlip7, hasSecondChance, hasZero, isBustLine, numberCards, scoreLine, type ScoreBreakdown } from './scoring';
+import { PRESET_RULES, type Rules } from './rules';
 
 export type Status = 'active' | 'stayed' | 'busted';
 export type Phase = 'playing' | 'roundEnd' | 'gameOver';
@@ -49,12 +50,19 @@ export const WIN_RULES: WinRule[] = ['roundEnd', 'instant'];
 
 export interface GameOptions {
   variant: Variant;
-  /** Vengeance only. */
+  /** Vengeance and custom only. */
   brutal: boolean;
   target: number;
   winRule: WinRule;
+  /** Deck and rules for the custom variant (defaults to the classic preset). */
+  custom?: Rules;
 }
 export const DEFAULT_OPTIONS: GameOptions = { variant: 'classic', brutal: false, target: 200, winRule: 'roundEnd' };
+
+/** The deck and rule switches a game is played with. */
+export function rulesFor(options: GameOptions): Rules {
+  return options.variant === 'custom' ? options.custom ?? PRESET_RULES.classic : PRESET_RULES[options.variant];
+}
 export interface LogEntry { seq: number; text: string }
 
 /** Structured happenings, so clients can animate what the log describes. */
@@ -116,6 +124,7 @@ export class Game {
   winners: string[] = [];
   log: LogEntry[] = [];
   events: GameEvent[] = [];
+  readonly rules: Rules;
 
   private queue: Task[] = [];
   /** Brutal Flip 7 choice: undefined = not chosen, null = took +15, string = penalised player. */
@@ -132,7 +141,8 @@ export class Game {
     if (players.length < 1) throw new Error('Need at least one player');
     this.players = players.map((p) => ({ ...p, line: [], status: 'active', frozen: false, bustCardId: null, total: 0, lastRound: null }));
     if (options.variant === 'classic') this.options = { ...options, brutal: false };
-    this.deck = deck ? [...deck] : shuffle(buildDeck(options.variant), rng);
+    this.rules = rulesFor(this.options);
+    this.deck = deck ? [...deck] : shuffle(buildDeck(this.rules.deck), rng);
     // Last seat deals first so the first card goes to seat 0.
     this.dealer = this.players.length - 1;
     this.startRound();
@@ -148,10 +158,6 @@ export class Game {
 
   get currentTurnId(): string | null {
     return this.phase === 'playing' ? this.players[this.turn]?.id ?? null : null;
-  }
-
-  get classic(): boolean {
-    return this.options.variant === 'classic';
   }
 
   liveScore(p: Player): ScoreBreakdown {
@@ -173,7 +179,7 @@ export class Game {
           this.prompt = null;
           this.queue.unshift({ t: 'draw', playerId }, { t: 'nextTurn' });
         } else if (d.type === 'stay') {
-          if (!pr.canStay) return this.classic ? 'You need a card in front of you to stay' : 'You hold the Zero and must keep hitting';
+          if (!pr.canStay) return hasZero(p.line) ? 'You hold the Zero and must keep hitting' : 'You need a card in front of you to stay';
           this.prompt = null;
           p.status = 'stayed';
           this.say(`${p.name} stays`);
@@ -300,7 +306,7 @@ export class Game {
         this.say(`${p.name} flips ${cardWithArticle(card)}`);
         this.emit({ kind: 'flip', playerId: p.id, card });
         if (card.kind === 'number') this.gainNumber(p, card);
-        else if (card.kind === 'modifier' && this.classic) p.line.push(card);
+        else if (card.kind === 'modifier' && !this.rules.giveModifiers) p.line.push(card);
         else this.queue.unshift({ t: 'give', holderId: p.id, card });
         return;
       }
@@ -327,6 +333,12 @@ export class Game {
           const p = this.players[idx];
           if (p.status === 'active') {
             this.turn = idx;
+            if (!this.canStay(p) && this.outOfCards()) {
+              // Only possible with a small custom deck: can't stay, nothing left to hit.
+              this.say('No cards left anywhere!');
+              this.queue.unshift({ t: 'forceStay', playerId: p.id }, { t: 'turn' });
+              return;
+            }
             this.prompt = { kind: 'hitOrStay', playerId: p.id, canStay: this.canStay(p) };
             return;
           }
@@ -368,14 +380,18 @@ export class Game {
     return this.deck.shift()!;
   }
 
-  /** Classic: you need a card in front of you. Vengeance: holding the Zero forces you to hit. */
+  outOfCards(): boolean {
+    return !this.deck.length && !this.discardPile.length;
+  }
+
+  /** Classic: you need a card in front of you. Holding the Zero (Vengeance) forces you to hit. */
   private canStay(p: Player): boolean {
-    return this.classic ? p.line.length > 0 : !hasZero(p.line);
+    return (!this.rules.stayNeedsCard || p.line.length > 0) && !hasZero(p.line);
   }
 
   private gainNumber(p: Player, card: NumberCard) {
     if (card.special === 'unlucky7') this.applyUnlucky7(p);
-    if (this.classic && isBustLine([...p.line, card]) && hasSecondChance(p.line)) {
+    if (isBustLine([...p.line, card]) && hasSecondChance(p.line)) {
       const idx = p.line.findIndex((c) => c.kind === 'action' && c.action === 'secondChance');
       this.discardPile.push(...p.line.splice(idx, 1), card);
       this.say(`Second Chance saves ${p.name}! The duplicate ${cardLabel(card)} is discarded`);
@@ -402,7 +418,7 @@ export class Game {
       p.bustCardId = p.line[p.line.length - 1].id;
       this.say(`${p.name} BUSTS!`);
       this.emit({ kind: 'bust', playerId: p.id, cardId: p.bustCardId });
-    } else if (hasFlip7(p.line)) {
+    } else if (hasFlip7(p.line, this.rules.flip7Count)) {
       this.flip7By = p.id;
       this.say(`${p.name} FLIPS 7! The round ends.`);
       this.emit({ kind: 'flip7', playerId: p.id, cards: numberCards(p.line) });
@@ -439,12 +455,10 @@ export class Game {
 
   /** Who may receive a drawn Action (or, in Vengeance, Modifier) card. */
   private giveOptions(holderId: string, card: Card): string[] {
-    if (!this.classic) {
-      // Steal/Swap/Discard are always used by whoever drew them: no target to pick.
-      if (isSelfPlayed(card) && this.player(holderId).status !== 'busted') return [holderId];
-      const pool = card.kind === 'modifier' && this.options.brutal ? this.players : this.nonBusted();
-      return pool.map((p) => p.id);
-    }
+    const { selfPlayed, targetStayed } = this.rules;
+    // Steal/Swap/Discard are always used by whoever drew them: no target to pick.
+    if (selfPlayed && isSelfPlayed(card) && this.player(holderId).status !== 'busted') return [holderId];
+    if (card.kind === 'modifier' && this.options.brutal) return this.players.map((p) => p.id);
     const active = this.players.filter((p) => p.status === 'active');
     if (card.kind === 'action' && card.action === 'secondChance') {
       // Keep it; if you already have one, give it to another active player without one.
@@ -452,7 +466,7 @@ export class Game {
       if (holder.status === 'active' && !hasSecondChance(holder.line)) return [holderId];
       return active.filter((p) => p.id !== holderId && !hasSecondChance(p.line)).map((p) => p.id);
     }
-    return active.map((p) => p.id);
+    return (targetStayed ? this.nonBusted() : active).map((p) => p.id);
   }
 
   private startGive(holderId: string, card: Card) {
@@ -543,9 +557,10 @@ export class Game {
   }
 
   /**
-   * Flip Three / Flip Four: stop on a bust or Flip 7. Other Actions (and in
-   * Vengeance, Modifiers) are set aside and resolved after all flips. Classic
-   * Modifiers go straight to the line and a Second Chance is taken at once.
+   * Flip Three / Flip Four: stop on a bust or Flip 7. Other Actions (and
+   * Modifiers that are given, as in Vengeance) are set aside and resolved after
+   * all flips. Kept Modifiers go straight to the line and a Second Chance is
+   * taken at once.
    */
   private stepFlip(task: Extract<Task, { t: 'flip' }>) {
     const p = this.player(task.playerId);
@@ -565,9 +580,9 @@ export class Game {
       this.gainNumber(p, card);
       // gainNumber may have busted the player or ended the round
       if (this.flip7By || (p.status as Status) === 'busted') return discardSetAside();
-    } else if (this.classic && card.kind === 'modifier') {
+    } else if (card.kind === 'modifier' && !this.rules.giveModifiers) {
       p.line.push(card);
-    } else if (this.classic && card.kind === 'action' && card.action === 'secondChance') {
+    } else if (card.kind === 'action' && card.action === 'secondChance') {
       this.queue.unshift(next);
       this.queue.unshift({ t: 'give', holderId: p.id, card });
       return;
@@ -634,13 +649,14 @@ export class Game {
     for (const p of this.players) {
       const flip7 = p.id === this.flip7By;
       const takeBonus = !(flip7 && brutal && typeof this.bonusChoice === 'string');
-      p.lastRound = scoreLine(p.line, { busted: p.status === 'busted', flip7, takeBonus, brutal });
+      p.lastRound = scoreLine(p.line, { busted: p.status === 'busted', flip7, takeBonus, brutal, bonus: this.rules.flip7Bonus });
     }
     if (typeof this.bonusChoice === 'string' && this.flip7By) {
       const victim = this.player(this.bonusChoice);
-      victim.lastRound!.penalty = -FLIP7_BONUS;
-      victim.lastRound!.total -= FLIP7_BONUS;
-      this.say(`${this.player(this.flip7By).name} uses their Flip 7 to take 15 from ${victim.name}`);
+      const bonus = this.rules.flip7Bonus;
+      victim.lastRound!.penalty = -bonus;
+      victim.lastRound!.total -= bonus;
+      this.say(`${this.player(this.flip7By).name} uses their Flip 7 to take ${bonus} from ${victim.name}`);
     }
     for (const p of this.players) {
       p.total += p.lastRound!.total;

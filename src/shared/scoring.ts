@@ -27,6 +27,8 @@ export interface ScoreOptions {
   /** False when a Brutal Flip 7 player chose to hit someone else instead. */
   takeBonus?: boolean;
   brutal?: boolean;
+  /** Points for a Flip 7 (custom rules can change it). */
+  bonus?: number;
 }
 
 export function numberCards(line: Card[]): NumberCard[] {
@@ -46,8 +48,8 @@ export function isBustLine(line: Card[]): boolean {
   return false;
 }
 
-export function hasFlip7(line: Card[]): boolean {
-  return numberCards(line).length >= FLIP7_COUNT;
+export function hasFlip7(line: Card[], count = FLIP7_COUNT): boolean {
+  return numberCards(line).length >= count;
 }
 
 export function hasZero(line: Card[]): boolean {
@@ -63,7 +65,7 @@ export function hasSecondChance(line: Card[]): boolean {
  * or add Modifiers, floor at 0, +15. Each deck only has one family of Modifiers.
  */
 export function scoreLine(line: Card[], opts: ScoreOptions = {}): ScoreBreakdown {
-  const { busted = false, flip7 = false, takeBonus = true, brutal = false } = opts;
+  const { busted = false, flip7 = false, takeBonus = true, brutal = false, bonus = FLIP7_BONUS } = opts;
   const mods = (op: string) => line.filter((c) => c.kind === 'modifier' && c.op === op);
   const total = (op: string) => mods(op).reduce((s, c) => s + (c.kind === 'modifier' ? c.amount : 0), 0);
   const minus = total('sub');
@@ -84,6 +86,6 @@ export function scoreLine(line: Card[], opts: ScoreOptions = {}): ScoreBreakdown
   for (let i = 0; i < doubles; i++) score *= 2;
   score += plus - minus;
   if (!brutal) score = Math.max(0, score);
-  const flip7Bonus = flip7 && takeBonus ? FLIP7_BONUS : 0;
+  const flip7Bonus = flip7 && takeBonus ? bonus : 0;
   return { ...base, busted, zeroed, flip7Bonus, total: score + flip7Bonus };
 }

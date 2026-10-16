@@ -14,11 +14,12 @@ export function botDecision(game: Game, playerId: string): Decision {
   switch (pr.kind) {
     case 'hitOrStay': {
       if (!pr.canStay) return { type: 'hit' };
+      if (game.outOfCards()) return { type: 'stay' };
       // A Second Chance turns the next bust into a lost card.
       const risk = bustChance(me.line, game.deck) * (hasSecondChance(me.line) ? 0.25 : 1);
       const score = game.liveScore(me).total;
       const count = numberCards(me.line).length;
-      const hit = risk < 0.2 || (score < 20 && risk < 0.45) || (count === 6 && risk < 0.5);
+      const hit = risk < 0.2 || (score < 20 && risk < 0.45) || (count === game.rules.flip7Count - 1 && risk < 0.5);
       return { type: hit ? 'hit' : 'stay' };
     }
     case 'give': {
@@ -67,7 +68,7 @@ export function botDecision(game: Game, playerId: string): Decision {
     }
     case 'flip7Bonus': {
       const leader = maxBy(pr.options.map((id) => game.player(id)), (p) => p.total);
-      return { type: 'flip7Bonus', targetId: leader.total >= me.total - 15 ? leader.id : null };
+      return { type: 'flip7Bonus', targetId: leader.total >= me.total - game.rules.flip7Bonus ? leader.id : null };
     }
   }
 }

@@ -3,6 +3,7 @@ import { buildDeck, cardFromKey, cardKey, cardWithArticle, type Card } from './c
 import { Game, type GameOptions } from './engine';
 import type { Variant } from './cards';
 import { scoreLine } from './scoring';
+import { PRESET_RULES, copyRules, rulesProblem, sanitizeRules, type Rules } from './rules';
 import { botDecision, timeoutDecision } from './bot';
 
 let nextId = 10_000;
@@ -294,7 +295,7 @@ describe('special number cards', () => {
   });
 
   it('the Zero prevents staying', () => {
-    const g = setup(2, ['zero', 'n2']);
+    const g = setup(2, ['zero', 'n2', 'n9']);
     expect(g.prompt).toMatchObject({ kind: 'hitOrStay', canStay: false });
     expect(g.decide('a', { type: 'stay' })).toMatch(/Zero/);
   });
@@ -508,5 +509,91 @@ describe('wording and timers', () => {
     expect(timeoutDecision(g, 'a')).toEqual({ type: 'stay' });
     const z = setup(2, ['zero', 'n6', 'n9']);
     expect(timeoutDecision(z, 'a')).toEqual({ type: 'hit' });
+  });
+});
+
+describe('custom rules', () => {
+  const custom = (change: Partial<Rules>, n: number, deck: string[], opts: Partial<GameOptions> = {}) =>
+    setup(n, deck, { variant: 'custom', custom: { ...copyRules(PRESET_RULES.classic), ...change }, ...opts });
+
+  it('presets match the official decks', () => {
+    expect(buildDeck(PRESET_RULES.classic.deck)).toHaveLength(94);
+    expect(buildDeck(PRESET_RULES.vengeance.deck)).toHaveLength(108);
+  });
+
+  it('builds the deck from the custom counts', () => {
+    const counts = { n1: 5, n2: 3, '+4': 2 };
+    const g = new Game(PLAYERS.slice(0, 2), { variant: 'custom', brutal: false, target: 200, winRule: 'roundEnd', custom: { ...copyRules(PRESET_RULES.classic), deck: counts } }, () => 0.5);
+    expect(g.deck.length + g.players.reduce((n, p) => n + p.line.length, 0) + g.discardPile.length).toBe(10);
+  });
+
+  it('can end the round with a shorter Flip 7 and a different bonus', () => {
+    const g = custom({ flip7Count: 3, flip7Bonus: 40 }, 2, ['n1', 'n5', 'n2', 'n6', 'n3', 'n9']);
+    ok(g.decide('a', { type: 'hit' }));
+    ok(g.decide('b', { type: 'hit' }));
+    ok(g.decide('a', { type: 'hit' }));
+    expect(g.flip7By).toBe('a');
+    expect(g.player('a').lastRound).toMatchObject({ flip7: true, flip7Bonus: 40, total: 6 + 40 });
+  });
+
+  it('giveModifiers lets you hand a classic +4 to someone else', () => {
+    const g = custom({ giveModifiers: true }, 2, ['n1', 'n5', '+4', 'n9']);
+    ok(g.decide('a', { type: 'hit' }));
+    expect(g.prompt).toMatchObject({ kind: 'give', playerId: 'a' });
+    ok(g.decide('a', { type: 'give', targetId: 'b' }));
+    expect(keys(g, 'b')).toEqual(['n5', '+4']);
+  });
+
+  it('targetStayed lets Actions hit players who stayed', () => {
+    const g = custom({ targetStayed: true }, 2, ['n1', 'n5', 'flipThree', 'n7', 'n8', 'n9', 'n10']);
+    ok(g.decide('a', { type: 'stay' }));
+    ok(g.decide('b', { type: 'hit' }));
+    expect(g.prompt).toMatchObject({ kind: 'give', options: ['a', 'b'] });
+  });
+
+  it('stayNeedsCard off lets you stay with nothing', () => {
+    const g = custom({ stayNeedsCard: false }, 2, ['flipThree', 'n5', 'n1', 'n2', 'n3', 'n9']);
+    // A's dealt Flip Three goes to a or b
+    if (g.prompt?.kind === 'give') ok(g.decide('a', { type: 'give', targetId: 'b' }));
+    expect(g.player('a').line).toHaveLength(0);
+    expect(g.prompt).toMatchObject({ kind: 'hitOrStay', playerId: 'a', canStay: true });
+  });
+
+  it('mixes classic and Vengeance cards', () => {
+    const g = custom({}, 2, ['n4', 'n5', 'x2', '-2', 'n9']);
+    ok(g.decide('a', { type: 'hit' }));
+    expect(keys(g, 'a')).toEqual(['n4', 'x2']);
+    ok(g.decide('b', { type: 'hit' }));
+    expect(keys(g, 'b')).toEqual(['n5', '-2']);
+    expect(g.liveScore(g.player('a')).total).toBe(8);
+    expect(g.liveScore(g.player('b')).total).toBe(3);
+  });
+
+  it('sanitizes rules from clients', () => {
+    const r = sanitizeRules({ deck: { n1: 999, n2: -4, bogus: 3, n3: 2.6 }, flip7Count: 99, flip7Bonus: 'x', giveModifiers: 'yes' }, PRESET_RULES.classic);
+    expect(r.deck).toEqual({ n1: 30, n3: 3 });
+    expect(r.flip7Count).toBe(15);
+    expect(r.flip7Bonus).toBe(15);
+    expect(r.giveModifiers).toBe(false);
+    expect(rulesProblem(r)).toBeNull();
+    expect(rulesProblem({ ...r, deck: { n1: 9, freeze: 20 } })).toMatch(/at least 10 Number/);
+    expect(rulesProblem(PRESET_RULES.vengeance)).toBeNull();
+  });
+
+  it('bots finish games on small, odd decks without getting stuck', () => {
+    for (let seed = 1; seed <= 30; seed++) {
+      let s = seed;
+      const rng = () => ((s = (s * 16807) % 2147483647) / 2147483647);
+      const deck = { n1: 2, n2: 3, n3: 4, n13: 3, zero: 1, lucky13: 1, unlucky7: 1, '+4': 2, '-6': 1, x2: 1, '/2': 1, freeze: 1, flipThree: 2, secondChance: 2, steal: 1, swap: 1, discard: 1, justOneMore: 1, flipFour: 1 };
+      const rules: Rules = { deck, giveModifiers: seed % 2 === 0, targetStayed: seed % 3 === 0, stayNeedsCard: seed % 4 < 2, selfPlayed: seed % 5 !== 0, flip7Count: 3 + (seed % 5), flip7Bonus: seed };
+      const g = new Game(PLAYERS.slice(0, 2 + (seed % 3)), { variant: 'custom', brutal: seed % 2 === 1, target: 60, winRule: 'roundEnd', custom: rules }, rng);
+      let steps = 0;
+      while (g.phase !== 'gameOver') {
+        if (g.phase === 'roundEnd') g.nextRound();
+        else ok(g.decide(g.prompt!.playerId, botDecision(g, g.prompt!.playerId)));
+        if (++steps > 20_000) throw new Error('game did not finish');
+      }
+      expect(g.deck.length + g.discardPile.length).toBe(buildDeck(deck).length);
+    }
   });
 });

@@ -471,3 +471,15 @@ input, select {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition: none !important; }
 }
 .frost-flake { position: absolute; right: 8px; bottom: 18px; width: 64px; height: 64px; color: #cfefff; opacity: 0.35; animation: spin 20s linear infinite; }
+
+/* ---------------------------------------------------------------- custom rules */
+.custom-rules { display: flex; flex-direction: column; gap: 8px; padding: 10px; background: #0003; border-radius: 8px; }
+.card-counts {
+  border: 1px solid var(--line); border-radius: 6px; margin: 0; padding: 6px 8px 8px;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 4px 10px;
+}
+.card-counts legend { font-size: 12px; color: var(--muted); padding: 0 4px; }
+.options .card-counts label { flex-wrap: nowrap; justify-content: space-between; font-size: 13px; }
+.card-counts .count-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.options .card-counts input[type='number'] { width: 52px; flex-shrink: 0; }
+.card-counts.wide { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }

@@ -76,6 +76,7 @@ who find your tunnel URL can't join or pose as someone else. Set
 
 ```
 src/shared/cards.ts     deck composition (DECK_COUNTS), card helpers
+src/shared/rules.ts     rule switches, presets and custom-rule validation
 src/shared/scoring.ts   bust / Flip 7 / score calculation
 src/shared/engine.ts    server-authoritative rules engine (task queue + prompts)
 src/shared/bot.ts       heuristic bot (also plays for disconnected players after 15s)
@@ -116,6 +117,23 @@ From the [rulebook](https://cdn.shopify.com/s/files/1/0611/3958/3198/files/26_FL
 - Holding the Zero: you can't choose to stay.
 - Brutal mode: negative round scores, Modifiers may hit busted players,
   Flip 7 may take 15 from another player instead of +15.
+
+### Custom rules
+Pick **Custom rules** in the lobby to edit the deck and the rule switches
+(`src/shared/rules.ts`). Start from either official preset, then:
+- Set how many of each card are in the deck (0-30 each): Numbers 0-13, the
+  Zero / Unlucky 7 / Lucky 13, both Modifier families and all eight Actions,
+  mixed freely. At least 10 Number cards are required.
+- **Give Modifiers**: drawn Modifiers are given to a player (Vengeance) instead
+  of kept (classic).
+- **Target stayed players**: Actions and Modifiers may go to stayed players.
+- **Need a card to stay**: classic rule; the Zero always prevents staying.
+- **Self-played Steal/Swap/Discard**: the house rule above; off = the drawer
+  picks who uses them.
+- Flip 7 length (3-15 unique Numbers) and bonus (0-100), plus Brutal mode.
+
+If nobody can draw (tiny deck, all cards on the table), a player who must hit
+is made to stay instead.
 
 ## Running it in Discord
 

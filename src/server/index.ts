@@ -7,6 +7,7 @@ import { botDecision, timeoutDecision } from '../shared/bot';
 import { cardKey, cardKeys, VARIANTS, type Variant } from '../shared/cards';
 import { TURN_TIMER_CHOICES, eventDuration, type ClientMessage, type GameView, type RoomView, type ServerMessage } from '../shared/protocol';
 import { WIN_RULES, type Prompt, type WinRule } from '../shared/engine';
+import { PRESET_RULES, copyRules, rulesProblem, sanitizeRules, type Rules } from '../shared/rules';
 
 try {
   process.loadEnvFile(path.resolve(import.meta.dirname, '../../.env'));
@@ -63,6 +64,7 @@ class Room {
   brutal = false;
   target = 200;
   winRule: WinRule = 'roundEnd';
+  custom: Rules = copyRules(PRESET_RULES.classic);
   turnSeconds = 0;
   game: Game | null = null;
   sockets = new Map<WebSocket, string>();
@@ -119,6 +121,7 @@ class Room {
       brutal: this.brutal,
       target: this.target,
       winRule: this.winRule,
+      custom: this.custom,
       turnSeconds: this.turnSeconds,
       members: this.members.map((m) => ({ ...m, connected: m.isBot || this.isConnected(m.id) })),
     };
@@ -354,6 +357,7 @@ function handle(ws: WebSocket, msg: ClientMessage, ctx: { room: Room | null }): 
       if (typeof msg.target === 'number' && msg.target >= 25 && msg.target <= 1000) room.target = Math.round(msg.target);
       if (msg.winRule && WIN_RULES.includes(msg.winRule)) room.winRule = msg.winRule;
       if (typeof msg.turnSeconds === 'number' && TURN_TIMER_CHOICES.includes(msg.turnSeconds)) room.turnSeconds = msg.turnSeconds;
+      if (msg.custom) room.custom = sanitizeRules(msg.custom, room.custom);
       return null;
     }
     case 'start': {
@@ -361,7 +365,12 @@ function handle(ws: WebSocket, msg: ClientMessage, ctx: { room: Room | null }): 
       const seated = room.members.slice(0, MAX_PLAYERS);
       if (seated.length < 2) return 'Need at least 2 players (add a bot?)';
       if (seated.some((m) => !m.isBot && !room.isConnected(m.id))) return 'Someone is reconnecting; wait a moment';
-      room.game = new Game(seated, { variant: room.variant, brutal: room.brutal, target: room.target, winRule: room.winRule });
+      if (room.variant === 'custom') {
+        const problem = rulesProblem(room.custom);
+        if (problem) return problem;
+      }
+      const custom = room.variant === 'custom' ? copyRules(room.custom) : undefined;
+      room.game = new Game(seated, { variant: room.variant, brutal: room.brutal, target: room.target, winRule: room.winRule, custom });
       return null;
     }
     case 'decide': {
@@ -383,7 +392,7 @@ function handle(ws: WebSocket, msg: ClientMessage, ctx: { room: Room | null }): 
     case 'rig': {
       if (!DEV) return 'Rigging is only available in dev mode';
       if (!room.game) return 'No game running';
-      if (!cardKeys(room.game.options.variant).includes(msg.key)) return 'Unknown card';
+      if (!cardKeys(room.game.rules.deck).includes(msg.key)) return 'Unknown card';
       return room.game.rigTopCard((c) => cardKey(c) === msg.key) ? null : 'That card is not available';
     }
     default:
