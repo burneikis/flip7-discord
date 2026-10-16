@@ -1,0 +1,99 @@
+<!doctype html>
+<!-- Discord activity art. Render with: node art/shoot.mjs out.png W H 1 "file://.../art.html?m=cover|bg|icon" -->
+<html>
+<head>
+<meta charset="UTF-8" />
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; font-family: 'Inter', system-ui, sans-serif; }
+  body { background: radial-gradient(ellipse at 50% 35%, #1d4a6e 0%, #13283a 45%, #0a121a 100%); position: relative; }
+  .rays { position: absolute; left: 50%; top: 50%; width: 260vmax; height: 260vmax; transform: translate(-50%, -50%);
+    background: repeating-conic-gradient(#ffcc3314 0 9deg, #0000 9deg 18deg); }
+  .felt { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); border-radius: 50%;
+    background: radial-gradient(ellipse at center, #1d5a45 0%, #144434 60%, #0f3327 100%);
+    box-shadow: inset 0 0 0 1.2vmin #3a2614, inset 0 0 0 1.6vmin #5c3d20, inset 0 0 8vmin #0008, 0 2vmin 6vmin #000a; }
+  .card { position: absolute; width: var(--w); height: calc(var(--w) * 1.414); border-radius: calc(var(--w) * 0.13);
+    background: #fbf7ee; border: calc(var(--w) * 0.055) solid hsl(var(--hue) 70% 55%);
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 calc(var(--w) * 0.06) calc(var(--w) * 0.2) #000a;
+    transform: translate(-50%, -50%) rotate(var(--r)); }
+  .card b { font-weight: 900; font-size: calc(var(--w) * 0.6); line-height: 1; color: hsl(var(--hue) 70% 40%); }
+  .card i { position: absolute; top: 5%; left: 9%; font-style: normal; font-weight: 900; font-size: calc(var(--w) * 0.2); color: hsl(var(--hue) 70% 40%); }
+  .card.mod { background: #fff1d6; border-color: #ff9a3d; } .card.mod b, .card.mod i { color: #d35f00; } .card.mod b { font-size: calc(var(--w) * 0.42); }
+  .card.act { background: linear-gradient(160deg, #6a3df0, #b05cff); border-color: #d7b8ff; }
+  .card.act b, .card.act i { color: #fff; } .card.act b { font-size: calc(var(--w) * 0.36); }
+  .card.f3 { background: linear-gradient(160deg, #e0303a, #ff7a3d); border-color: #ffc0a0; }
+  .card.ice { background: radial-gradient(circle at 30% 20%, #e8f8ff, #8fd6ff 45%, #2a7fd0); border-color: #fff; }
+  .card.ice b { color: #0b2a44; font-size: calc(var(--w) * 0.7); }
+  .card.back { background: repeating-linear-gradient(45deg, #26425c, #26425c 8%, #1b3349 8%, #1b3349 16%); border-color: #3b6488; }
+  .card.lucky { background: #222; border-color: #ffcc33; } .card.lucky b, .card.lucky i { color: #ffcc33; }
+  .title { position: absolute; left: 50%; transform: translateX(-50%); white-space: nowrap; text-align: center; }
+  .logo { font-weight: 900; line-height: 0.9; letter-spacing: 0.04em; margin: 0;
+    background: linear-gradient(90deg, #ff5a5f, #ffcc33, #3ddc84, #33b5ff, #b05cff);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    filter: drop-shadow(0 0.06em 0 #000a) drop-shadow(0 0 0.2em #0008); }
+  .sub { color: #ffcc33; font-weight: 800; font-style: italic; letter-spacing: 0.08em; text-shadow: 0 0.08em 0 #000a; }
+</style>
+</head>
+<body>
+<div class="rays"></div>
+<div id="root"></div>
+<script>
+  const mode = new URLSearchParams(location.search).get('m') || 'cover';
+  const root = document.getElementById('root');
+  const hue = (v) => (v * 29 + 200) % 360;
+  // [kind, label, x%, y%, width(vmin), rotation]
+  function card(kind, label, x, y, w, r) {
+    const el = document.createElement('div');
+    el.className = 'card ' + (kind === 'n' ? '' : kind);
+    el.style.cssText = `left:${x}%;top:${y}%;--w:${w}vmin;--r:${r}deg;--hue:${kind === 'n' ? hue(+label) : 0}`;
+    if (kind === 'ice') el.innerHTML = '<b>&#10052;</b>';
+    else if (kind !== 'back') el.innerHTML = `<i>${label}</i><b>${label}</b>`;
+    root.appendChild(el);
+  }
+  function felt(w, h) {
+    const f = document.createElement('div');
+    f.className = 'felt'; f.style.width = w; f.style.height = h; root.appendChild(f);
+  }
+  function fan(values, cx, cy, w, spread, radius) {
+    const n = values.length;
+    values.forEach(([k, l], i) => {
+      const a = (i - (n - 1) / 2) * spread;
+      const rad = (a * Math.PI) / 180;
+      card(k, l, cx + Math.sin(rad) * radius, cy - Math.cos(rad) * radius * 1.7 + radius * 1.7, w, a);
+    });
+  }
+  const SEVEN = [['n', 3], ['n', 8], ['n', 12], ['n', 7], ['n', 1], ['n', 5], ['n', 10]];
+
+  if (mode === 'bg') {
+    // Art only around the edges; the centre stays empty for Discord's UI.
+    card('n', 12, 4, 12, 15, -18); card('n', 7, 13, 6, 13, 10); card('act', '3', 3, 48, 13, 8);
+    card('ice', '', 7, 86, 15, -12); card('mod', 'x2', 17, 96, 12, 22);
+    card('n', 5, 96, 10, 15, 16); card('mod', '+4', 86, 5, 12, -14); card('lucky', 13, 97, 50, 13, -8);
+    card('n', 9, 93, 88, 15, 12); card('back', '', 83, 97, 12, -20);
+    card('n', 3, 30, 2, 9, -25); card('n', 11, 70, 99, 9, 18); card('back', '', 68, 1, 9, 30); card('mod', '+6', 31, 98, 9, -10);
+    document.body.style.background = 'radial-gradient(ellipse at 50% 50%, #13283a 0%, #0f1a24 55%, #0a121a 100%)';
+  } else if (mode === 'icon') {
+    felt('92vmin', '92vmin');
+    fan(SEVEN.slice(0, 5), 50, 34, 20, 17, 14);
+    const t = document.createElement('div');
+    t.className = 'title';
+    // Big "7" over the fan: the icon must read at 32px.
+    t.innerHTML = '<div class="logo" style="font-size:42vmin;letter-spacing:0">7</div>';
+    t.style.top = '44%';
+    root.appendChild(t);
+  } else {
+    // Cover: content kept in the middle ~55% width so a 13:11 crop still shows it.
+    felt('80vw', '75vh');
+    document.querySelector('.felt').style.top = '62%';
+    fan(SEVEN, 50, 30, 13, 13, 9);
+    card('ice', '', 22, 72, 11, -16); card('act', '3', 30, 85, 10, 10);
+    card('mod', 'x2', 78, 72, 11, 16); card('lucky', 13, 70, 85, 10, -10);
+    const t = document.createElement('div');
+    t.className = 'title'; t.style.top = '46%';
+    t.innerHTML = '<div class="logo" style="font-size:26vh">FLIP 7</div>';
+    root.appendChild(t);
+  }
+</script>
+</body>
+</html>
