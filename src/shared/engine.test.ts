@@ -32,7 +32,8 @@ describe('deck', () => {
   });
 
   it('classic is the default variant', () => {
-    const g = new Game(PLAYERS.slice(0, 2));
+    // Fixed shuffle: with a random one, a dealt Action held in a prompt is in nobody's line.
+    const g = new Game(PLAYERS.slice(0, 2), undefined, () => 0.5);
     expect(g.options.variant).toBe('classic');
     expect(g.deck.length + g.players.reduce((n, p) => n + p.line.length, 0) + g.discardPile.length).toBe(94);
   });
@@ -410,5 +411,44 @@ describe('bots', () => {
       const total = g.deck.length + g.discardPile.length;
       expect(total).toBe(buildDeck(variant).length);
     }
+  });
+});
+
+describe('notes: flip counting, bust card, freeze, events', () => {
+  it('Flip Three counts Modifiers and Actions as flips', () => {
+    const g = classic(2, ['n1', 'n2', 'flipThree', '+4', 'n5', 'freeze', 'n9']);
+    ok(g.decide('a', { type: 'hit' }));
+    ok(g.decide('a', { type: 'give', targetId: 'b' }));
+    expect(keys(g, 'b')).toEqual(['n2', '+4', 'n5']);
+    // the Freeze was the third flip; the 9 stays in the deck
+    expect(g.deck.map(cardKey)).toEqual(['n9']);
+    const steps = g.events.flatMap((e) => (e.kind === 'flip' && e.step ? [`${e.step.n}/${e.step.of}`] : []));
+    expect(steps).toEqual(['1/3', '2/3', '3/3']);
+  });
+
+  it('Flip Four counts Modifiers as flips', () => {
+    const g = setup(2, ['n1', 'n2', 'flipFour', '-2', 'n5', 'n6', 'n8', 'n9']);
+    ok(g.decide('a', { type: 'hit' }));
+    ok(g.decide('a', { type: 'give', targetId: 'b' }));
+    // -2 was set aside and is now being given; four flips used
+    expect(g.deck.map(cardKey)).toEqual(['n9']);
+  });
+
+  it('remembers the card that caused the bust', () => {
+    const g = classic(2, ['n5', 'n6', 'n9', 'n6']);
+    ok(g.decide('a', { type: 'hit' }));
+    ok(g.decide('b', { type: 'hit' }));
+    const b = g.player('b');
+    expect(b.status).toBe('busted');
+    expect(b.bustCardId).toBe(b.line[b.line.length - 1].id);
+    expect(g.events.some((e) => e.kind === 'bust' && e.playerId === 'b')).toBe(true);
+  });
+
+  it('marks frozen players until the next round', () => {
+    const g = classic(2, ['n5', 'n6', 'freeze', 'n9']);
+    ok(g.decide('a', { type: 'hit' }));
+    ok(g.decide('a', { type: 'give', targetId: 'b' }));
+    expect(g.player('b').frozen).toBe(true);
+    expect(g.player('a').frozen).toBe(false);
   });
 });
