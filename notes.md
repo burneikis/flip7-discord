@@ -1,14 +1,13 @@
-- animations
-- centered/cleaner ui
-- show last card that causes the bust
-- needs to know when u hit 200 within ur turn so you can win as you hit it
-- randomly, while we were in lobby, it said connecting to server, then it gave a different person leader
-- if someone gets kicked, they should be able to rejoin
-- timer option at lobby start
-- show freeze cards more clearly, show when ur frozen
-- flip three should count the non-number cards (modifiers etc)
-- circular table ui
-- ui doesnt fit if multiple rows have 2 rows of cards etc
-- cool animation for flip7
-
 - "user flips x" should say "user flips a x"
+- (out of time: you stay, or a bot picks for you) -should just be stay
+- animate cards coming from deck to the hand
+- mod cards should be seperate
+- only host should click next round
+- when dealing the cards go to the players too quick
+- why does 2nd chance have a 2 top left of card, fix, to say 2nd, or nothing there
+- add queueing hit/stay
+
+- show the actual discarded cards in the discard pile, it looks empty even when it has cards in it
+- instant-win on 200, or wait till end of round and see who has highest, if someone goes over 200
+- and undo the queue as well in case of missclick
+- on flip 7 show the actual cards flipped in the animation, not just 1-7 statically
