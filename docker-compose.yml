@@ -1,0 +1,49 @@
+# Flip 7 Discord Activity: app + Cloudflare tunnel.
+# The app publishes no host ports; Discord reaches it only through the tunnel.
+#
+#   cp .env.example .env   # fill in values
+#   docker compose up -d --build
+#   docker compose logs cloudflared | grep trycloudflare   # quick-tunnel URL
+services:
+  flip7:
+    build:
+      context: .
+      args:
+        VITE_DISCORD_CLIENT_ID: ${VITE_DISCORD_CLIENT_ID:?set VITE_DISCORD_CLIENT_ID in .env}
+    image: flip7-discord
+    container_name: flip7
+    restart: unless-stopped
+    environment:
+      VITE_DISCORD_CLIENT_ID: ${VITE_DISCORD_CLIENT_ID}
+      DISCORD_CLIENT_SECRET: ${DISCORD_CLIENT_SECRET:?set DISCORD_CLIENT_SECRET in .env}
+      ALLOWED_DISCORD_IDS: ${ALLOWED_DISCORD_IDS:-}
+      REQUIRE_DISCORD: "1"
+      TZ: Australia/Sydney
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 512m
+    cpus: 1.0
+    pids_limit: 128
+    networks: [flip7]
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: flip7-tunnel
+    restart: unless-stopped
+    # Quick tunnel (random URL, changes on every restart). For a fixed hostname,
+    # set TUNNEL_TOKEN in .env and change the command to: tunnel --no-autoupdate run
+    command: tunnel --no-autoupdate --url http://flip7:3001
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
+    depends_on: [flip7]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 128m
+    networks: [flip7]
+
+networks:
+  flip7:

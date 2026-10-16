@@ -24,6 +24,16 @@ const DEV = process.env.DEV === '1';
  * Otherwise every join must carry a verified Discord token.
  */
 const ALLOW_GUESTS = DEV || process.env.ALLOW_GUESTS === '1' || !DISCORD_CLIENT_ID || !DISCORD_CLIENT_SECRET;
+/** REQUIRE_DISCORD=1 refuses to start without Discord credentials instead of falling back to guests. */
+if (process.env.REQUIRE_DISCORD === '1' && (ALLOW_GUESTS || !DISCORD_CLIENT_ID || !DISCORD_CLIENT_SECRET)) {
+  console.error('REQUIRE_DISCORD=1 but Discord credentials are missing or guests/dev mode are enabled');
+  process.exit(1);
+}
+/** Optional comma-separated Discord user ids allowed to play (empty = any Discord user of this app). */
+const ALLOWED_DISCORD_IDS = new Set(
+  (process.env.ALLOWED_DISCORD_IDS ?? '').split(',').map((s) => s.trim()).filter(Boolean),
+);
+const MAX_ROOMS = Number(process.env.MAX_ROOMS ?? 50);
 /** Ids the server hands out itself; guests may not claim them. */
 const RESERVED_ID = /^(discord|bot)-/;
 const MAX_BODY_BYTES = 4096;
@@ -249,13 +259,27 @@ async function exchangeCode(code: string): Promise<{ status: number; body: unkno
 
 const verifiedTokens = new Map<string, { id: string; name: string; at: number }>();
 
-/** Ask Discord who owns this token, so players can't pretend to be each other. */
+/**
+ * Ask Discord who owns this token, so players can't pretend to be each other.
+ * Also checks the token was issued for this app (not some other app's token)
+ * and, if configured, that the user is on the allowlist.
+ */
 async function verifyDiscordUser(token: string): Promise<{ id: string; name: string } | null> {
+  if (typeof token !== 'string' || token.length > 256) return null;
   const cached = verifiedTokens.get(token);
   if (cached && Date.now() - cached.at < TOKEN_CACHE_MS) return cached;
-  const res = await fetch('https://discord.com/api/v10/users/@me', { headers: { Authorization: `Bearer ${token}` } });
+  const res = await fetch('https://discord.com/api/v10/oauth2/@me', { headers: { Authorization: `Bearer ${token}` } });
   if (!res.ok) return null;
-  const u = (await res.json()) as { id: string; username: string; global_name?: string | null };
+  const info = (await res.json()) as {
+    application?: { id?: string };
+    user?: { id: string; username: string; global_name?: string | null };
+  };
+  const u = info.user;
+  if (!u || info.application?.id !== DISCORD_CLIENT_ID) return null;
+  if (ALLOWED_DISCORD_IDS.size && !ALLOWED_DISCORD_IDS.has(u.id)) {
+    console.warn(`Rejected Discord user ${u.id} (${u.username}): not in ALLOWED_DISCORD_IDS`);
+    return null;
+  }
   const user = { id: `discord-${u.id}`, name: u.global_name || u.username, at: Date.now() };
   verifiedTokens.set(token, user);
   return user;
@@ -275,7 +299,10 @@ function handle(ws: WebSocket, msg: ClientMessage, ctx: { room: Room | null }): 
     const pid = String(msg.playerId).slice(0, 64);
     const name = String(msg.name || 'Player').trim().slice(0, 24) || 'Player';
     let room = rooms.get(roomId);
-    if (!room) rooms.set(roomId, (room = new Room(roomId)));
+    if (!room) {
+      if (rooms.size >= MAX_ROOMS) return 'Server is full, try again later';
+      rooms.set(roomId, (room = new Room(roomId)));
+    }
     ctx.room?.sockets.delete(ws);
     ctx.room = room;
     room.sockets.set(ws, pid);
@@ -434,12 +461,21 @@ wss.on('connection', (ws) => {
   const ctx: { room: Room | null } = { room: null };
   alive.add(ws);
   ws.on('pong', () => alive.add(ws));
-  ws.on('message', async (raw) => {
+  ws.on('message', (raw) => {
+    onMessage(raw).catch((e) => {
+      console.error(e);
+      send(ws, { type: 'error', message: 'Server error' });
+    });
+  });
+  async function onMessage(raw: unknown) {
     alive.add(ws);
     let msg: ClientMessage;
     try {
       msg = JSON.parse(String(raw));
     } catch {
+      return send(ws, { type: 'error', message: 'Bad message' });
+    }
+    if (!msg || typeof msg !== 'object' || typeof msg.type !== 'string') {
       return send(ws, { type: 'error', message: 'Bad message' });
     }
     if (msg.type === 'ping') return send(ws, { type: 'pong' });
@@ -456,11 +492,11 @@ wss.on('connection', (ws) => {
       err = handle(ws, msg, ctx);
     } catch (e) {
       console.error(e);
-      err = 'Server error: ' + (e as Error).message;
+      err = 'Server error';
     }
     if (err) send(ws, { type: 'error', message: err });
     ctx.room?.broadcast();
-  });
+  }
   ws.on('close', () => {
     const room = ctx.room;
     if (!room) return;
